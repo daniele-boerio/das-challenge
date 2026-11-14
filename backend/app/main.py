@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select, update
 
-from . import auth, config, db, game, judge, media, references
+from . import auth, config, db, game, judge, imagegen, media, references
 from .game import LOCK, GameError
 from .models import Match, Player, Round, User
 from .realtime import rooms
@@ -275,7 +275,11 @@ def join(code: str, uid: int = Depends(me)):
     return out
 
 
-def _fetch_reference(subject: tuple, colors: bool = False):
+def _fetch_reference(subject: tuple, colors: bool = False, difficulty: str = "media"):
+    """Prima la foto generata (c'è sempre, ed è veloce); se fallisce, la ricerca."""
+    image, attribution = imagegen.generate(subject[0], subject[1], difficulty, colors)
+    if image:
+        return image, attribution
     return references.fetch(subject[1], subject=subject[0], colors=colors)
 
 
@@ -321,7 +325,7 @@ def _prefetch_worker(code: str):
                     return  # non ci sono altri round da preparare
                 _, subject = game.choose_subject(m, d, taken)
                 colors = game.settings_of(m)["colors"]
-            image, attribution = _fetch_reference(subject, colors)
+            image, attribution = _fetch_reference(subject, colors, d)
             with _ready_lock:
                 _ready[(code, d)] = (subject, image, attribution)
     except Exception:
@@ -365,7 +369,7 @@ def start_round(code: str, body: RoundIn, uid: int = Depends(me)):
     if ready:
         subject, image, attribution = ready
     else:
-        image, attribution = _fetch_reference(subject, colors)
+        image, attribution = _fetch_reference(subject, colors, difficulty)
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
         game.check_can_start(m, seat)
@@ -395,7 +399,7 @@ def use_powerup(code: str, body: PowerupIn, uid: int = Depends(me)):
     if ready:
         subject, image, attribution = ready
     else:
-        image, attribution = _fetch_reference(subject, colors)
+        image, attribution = _fetch_reference(subject, colors, difficulty)
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
         r, _ = game.check_powerup(m, seat, "reroll")

@@ -48,7 +48,14 @@ più punti.
 La reference non è il soggetto vero ma **una scultura in pasta da modellare** di quel soggetto
 (DAS, pongo, polymer clay, plastilina, fimo): è quella che ha senso provare a rifare.
 Il catalogo dei soggetti (`backend/app/subjects.py`) è scelto a mano perché sia fattibile col DAS.
-Per ogni soggetto si cerca «polymer clay …», «clay …», «plasticine …» su
+
+Con la chiave OpenRouter la foto si **genera** (`backend/app/imagegen.py`): una scultura fatta a
+mano del soggetto, in DAS bianco o in paste colorate secondo l'impostazione, più semplice o più
+dettagliata secondo la difficoltà. Costa circa 1,5 centesimi a foto col modello di default
+(`IMAGE_MODEL`, di default `black-forest-labs/flux.2-klein-4b`; se non è nel listino si prende un
+altro modello di immagini economico). `IMAGE_AI=false` la spegne.
+
+Se la generazione fallisce, si cerca «polymer clay …», «clay …», «plasticine …» su
 [Openverse](https://openverse.org) (immagini Creative Commons) e poi su
 [Wikimedia Commons](https://commons.wikimedia.org), e si tengono solo i risultati che nel titolo,
 nei tag o nelle categorie dicono di essere di pasta da modellare. Se c'è la chiave OpenRouter, un
