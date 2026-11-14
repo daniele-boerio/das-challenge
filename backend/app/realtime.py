@@ -2,7 +2,7 @@
 
 Le rotte sono sincrone e girano nel threadpool: `notify()` da lì programma l'invio
 sull'event loop. Ogni connessione riceve lo stato visto dal *suo* giocatore (il
-voto dell'altro resta nascosto finché non hanno votato entrambi).
+le foto degli altri restano nascoste finché le consegne non si chiudono).
 """
 
 import asyncio
@@ -19,13 +19,13 @@ log = logging.getLogger(__name__)
 class Rooms:
     def __init__(self):
         self.loop: asyncio.AbstractEventLoop | None = None
-        self.conns: dict[str, dict[WebSocket, str | None]] = defaultdict(dict)
+        self.conns: dict[str, dict[WebSocket, int | None]] = defaultdict(dict)
         self.state_for = None  # callable(code, role, online) -> dict, impostato da main
 
-    def online(self, code: str) -> set[str]:
-        return {r for r in self.conns.get(code, {}).values() if r}
+    def online(self, code: str) -> set[int]:
+        return {r for r in self.conns.get(code, {}).values() if r is not None}
 
-    async def join(self, code: str, ws: WebSocket, role: str | None):
+    async def join(self, code: str, ws: WebSocket, role: int | None):
         self.conns[code][ws] = role
         await self.broadcast(code)
 
@@ -40,7 +40,7 @@ class Rooms:
         if not conns or not self.state_for:
             return
         online = self.online(code)
-        cache: dict[str | None, str] = {}
+        cache: dict[int | None, str] = {}
         for ws, role in conns:
             if role not in cache:
                 state = await run_in_threadpool(self.state_for, code, role, online)

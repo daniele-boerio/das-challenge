@@ -41,6 +41,8 @@ def app_env(tmp_path, monkeypatch, jpeg):
     monkeypatch.setattr(game, "COUNTDOWN_S", -1)
     # Il giudice AI gira nello stesso thread, così il test vede subito il risultato.
     monkeypatch.setattr(main, "start_judge", lambda code, n: main._run_judge(code, n))
+    # Niente ticker in background: i test chiamano main.tick_all() quando serve.
+    monkeypatch.setattr(main, "TICKER", False)
     with TestClient(main.app) as client:
         client.sent_codes = sent_codes
         yield client, monkeypatch
@@ -68,3 +70,21 @@ def new_player(base, email, name):
     c = TestClient(main.app)
     c.sent_codes = base.sent_codes
     return login(c, email, name)
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    """Un orologio da spostare a mano: clock.advance(secondi)."""
+    import time as _time
+
+    from app import game
+
+    class Clock:
+        t = _time.time()
+
+        def advance(self, seconds):
+            self.t += seconds
+
+    c = Clock()
+    monkeypatch.setattr(game, "now", lambda: c.t)
+    return c

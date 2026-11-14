@@ -75,9 +75,11 @@ export const api = {
   state: (code: string) => call<MatchState>(`/api/matches/${code}`),
   join: (code: string) => post<{ state: MatchState }>(`/api/matches/${code}/join`),
   startRound: (code: string, difficulty: string) => post<MatchState>(`/api/matches/${code}/rounds`, { difficulty }),
-  powerup: (code: string, kind: PowerupKind) => post<MatchState>(`/api/matches/${code}/powerups`, { kind }),
-  vote: (code: string, n: number, value: number) =>
-    post<MatchState>(`/api/matches/${code}/rounds/${n}/vote`, { value }),
+  powerup: (code: string, kind: PowerupKind, target?: number) =>
+    post<MatchState>(`/api/matches/${code}/powerups`, { kind, target }),
+  vote: (code: string, n: number, votes: Record<string, number>) =>
+    post<MatchState>(`/api/matches/${code}/rounds/${n}/vote`, { votes }),
+  closeVotes: (code: string, n: number) => post<MatchState>(`/api/matches/${code}/rounds/${n}/close-votes`),
   finish: (code: string) => post<MatchState>(`/api/matches/${code}/finish`),
   rematch: (code: string) => post<{ code: string; state: MatchState }>(`/api/matches/${code}/rematch`),
   gallery: () => call<Gallery>("/api/gallery"),

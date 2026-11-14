@@ -1,32 +1,47 @@
 # Sfida DAS 🏺
 
-Una webapp per sfidarsi a coppie con il DAS (la pasta da modellare che si asciuga all'aria):
-l'app pesca una reference, parte un timer condiviso, ognuno scolpisce sul proprio tavolo e
-alla fine carica la foto. Si vota a vicenda oppure decide un giudice AI. Vince chi fa più punti.
+Una webapp per sfidarsi con il DAS (la pasta da modellare che si asciuga all'aria), da 2 a 8
+giocatori: l'app pesca una reference, parte un timer condiviso, ognuno scolpisce sul proprio
+tavolo e alla fine carica la foto. Si vota a vicenda oppure decide un giudice AI. Vince chi fa
+più punti.
 
 ## Come si gioca
 
 0. Si entra con la mail: arriva un codice di 6 cifre, la prima volta si sceglie il nome, e poi
    si resta dentro per sempre su quel dispositivo.
 1. Chi crea la sfida sceglie le regole e manda il link (o il codice di 4 lettere).
-2. L'altro entra dal link, dal suo telefono. Una partita la vedono solo i due giocatori.
+2. Gli altri entrano dal link, ciascuno dal suo telefono, fino a 8 giocatori. Si entra solo
+   dalla sala d'attesa: col primo round la partita si chiude, e la vedono solo i giocatori.
 3. A ogni round chi ha creato la partita sceglie la difficoltà: **facile ×1**, **media ×1,5**,
    **difficile ×2** (oppure casuale). Dopo un «3, 2, 1» compare la reference e parte il timer.
 4. Quando hai finito, o allo scadere, fotografi la tua creazione e la consegni.
 5. Si vede il confronto affiancato alla reference e si giudica:
-   - **voto reciproco**: ognuno dà da 0 a 10 alla creazione dell'altro, voti segreti fino alla fine;
-   - **giudice AI**: un modello via OpenRouter confronta le foto con la reference e commenta;
+   - **voto fra voi**: ognuno dà da 0 a 10 alle creazioni di tutti gli altri, il punteggio è la
+     media dei voti ricevuti, voti segreti fino alla fine (chi ha creato la partita può chiudere
+     la votazione se qualcuno sparisce);
+   - **giudice AI**: un modello via OpenRouter confronta tutte le foto con la reference e commenta;
    - **entrambi**: media fra voto e AI.
 6. Punti del round = voto × moltiplicatore. Alla fine c'è la classifica e la rivincita a un tocco.
 
+### Il tempo
+
+- **Timer libero** (default): allo scadere si può continuare e consegnare lo stesso.
+- **Timer rigido**: allo scadere c'è 1 minuto per fotografare, poi le consegne si chiudono e chi
+  non ha consegnato prende 0 in quel round (ma vota gli altri).
+- **Senza tempo**: niente timer, il round finisce quando hanno consegnato tutti.
+- **Gli ultimi rincorrono** (facoltativa, con qualsiasi timer): quando N giocatori hanno
+  consegnato, chi manca ha M minuti per finire; questa scadenza è sempre rigida.
+
 ### Extra
 
-- **Power-up**, uno a testa per partita: *+2 minuti*, *−1 minuto all'avversario*, *cambia soggetto*
-  (nei primi 2 minuti, fa ripartire il round per tutti e due).
+- **Power-up**, uno a testa per partita: *+2 minuti*, *−1 minuto a un avversario a scelta*,
+  *cambia soggetto* (nei primi 2 minuti, fa ripartire il round per tutti). Senza tempo resta solo
+  il cambio soggetto.
 - **Handicap**: a chi è in testa, oppure a sorpresa (mano non dominante, occhi chiusi per 30 secondi…).
 - **Round a memoria**: ogni tanto la reference sparisce dopo 30 secondi.
 - **Temi**: misto, animali, cibo, oggetti di casa, natura, fantasy.
-- **Galleria**: le *tue* sfide finite con reference e foto, e il conto delle vittorie con ogni avversario.
+- **Galleria**: le *tue* sfide finite con reference e foto, le tue vittorie e il testa a testa
+  con ogni avversario (in quante sfide giocate insieme hai fatto più punti tu o lui).
 
 ## Da dove vengono le reference
 

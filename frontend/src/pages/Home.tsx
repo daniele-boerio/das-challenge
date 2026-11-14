@@ -1,13 +1,19 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Brain, Dices, Images, Shuffle, Sparkles, Swords, Users, Zap } from "lucide-react";
+import { Brain, Dices, Hourglass, Images, Shuffle, Sparkles, Swords, Timer, Users, Zap } from "lucide-react";
 import { api, prefs } from "../api";
 import { useApp } from "../App";
-import type { Difficulty, JudgeMode, Settings } from "../types";
+import type { Difficulty, JudgeMode, Settings, TimerMode } from "../types";
 import { DIFF_LABEL } from "../lib/util";
 
+const TIMERS: { id: TimerMode; label: string; hint: string }[] = [
+  { id: "libero", label: "Libero", hint: "Allo scadere si può continuare" },
+  { id: "rigido", label: "Rigido", hint: "Allo scadere hai 1 minuto per consegnare, poi si chiude" },
+  { id: "nessuno", label: "Senza tempo", hint: "Il round finisce quando hanno consegnato tutti" },
+];
+
 const JUDGES: { id: JudgeMode; label: string; hint: string }[] = [
-  { id: "voto", label: "Voto reciproco", hint: "Ognuno vota la creazione dell'altro" },
+  { id: "voto", label: "Voto fra voi", hint: "Ognuno vota le creazioni degli altri" },
   { id: "ai", label: "Giudice AI", hint: "Decide l'AI, con commento" },
   { id: "entrambi", label: "Entrambi", hint: "Media fra il vostro voto e l'AI" },
 ];
@@ -21,7 +27,14 @@ export default function Home() {
   const [settings, setSettings] = useState<Settings | null>(null);
 
   const s: Settings | null =
-    settings ?? (config ? { ...config.defaults, ...(prefs.settings() || {}), minutes: { ...config.defaults.minutes, ...(prefs.settings()?.minutes || {}) } } : null);
+    settings ??
+    (config
+      ? {
+          ...config.defaults,
+          ...(prefs.settings() || {}),
+          minutes: { ...config.defaults.minutes, ...(prefs.settings()?.minutes || {}) },
+        }
+      : null);
   const upd = (patch: Partial<Settings>) => s && setSettings({ ...s, ...patch });
   const aiOk = !!config?.ai_available;
 
@@ -56,7 +69,7 @@ export default function Home() {
           Sfida <span className="accent">DAS</span>
         </h1>
         <p className="subtitle">
-          Ciao <b className="accent">{user?.name}</b>! Una reference, un timer, due scultori.
+          Ciao <b className="accent">{user?.name}</b>! Una reference, un timer, fino a {config?.max_players ?? 8} scultori.
         </p>
       </header>
 
@@ -83,6 +96,26 @@ export default function Home() {
                 ))}
               </div>
               {!aiOk && <small className="muted">Il giudice AI non è configurato sul server: si vota a vicenda.</small>}
+            </div>
+
+            <div className="field">
+              <span>
+                <Timer size={16} /> Timer
+              </span>
+              <div className="seg">
+                {TIMERS.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    className={`seg-btn ${s.timer === t.id ? "on" : ""}`}
+                    onClick={() => upd({ timer: t.id })}
+                    title={t.hint}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+              <small className="muted">{TIMERS.find((t) => t.id === s.timer)?.hint}</small>
             </div>
 
             <div className="row2">
@@ -112,6 +145,7 @@ export default function Home() {
 
             {open && (
               <div className="advanced">
+                {s.timer !== "nessuno" && (
                 <div className="field">
                   <span>Minuti per difficoltà</span>
                   <div className="minutes">
@@ -132,7 +166,41 @@ export default function Home() {
                     ))}
                   </div>
                 </div>
-                <Toggle on={s.powerups} onChange={(v) => upd({ powerups: v })} icon={<Zap size={18} />} title="Power-up" hint="+2 min, −1 min all'avversario, cambio reference: uno a testa" />
+                )}
+                <Toggle
+                  on={s.rush}
+                  onChange={(v) => upd({ rush: v })}
+                  icon={<Hourglass size={18} />}
+                  title="Gli ultimi rincorrono"
+                  hint={`Quando ${s.rush_after} hanno consegnato, chi manca ha ${s.rush_minutes} minuti (poi si chiude)`}
+                />
+                {s.rush && (
+                  <div className="row2 rush-opts">
+                    <label className="field">
+                      <span>Dopo quante consegne</span>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min={1}
+                        max={(config?.max_players ?? 8) - 1}
+                        value={s.rush_after}
+                        onChange={(e) => upd({ rush_after: Math.max(1, Math.min(7, Number(e.target.value) || 1)) })}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Minuti per finire</span>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min={1}
+                        max={60}
+                        value={s.rush_minutes}
+                        onChange={(e) => upd({ rush_minutes: Math.max(1, Math.min(60, Number(e.target.value) || 1)) })}
+                      />
+                    </label>
+                  </div>
+                )}
+                <Toggle on={s.powerups} onChange={(v) => upd({ powerups: v })} icon={<Zap size={18} />} title="Power-up" hint={s.timer === "nessuno" ? "Senza tempo resta solo il cambio reference" : "+2 min, −1 min a un avversario, cambio reference: uno a testa"} />
                 <Toggle on={s.memory} onChange={(v) => upd({ memory: v })} icon={<Brain size={18} />} title="Round a memoria" hint="Ogni tanto la reference sparisce dopo 30 secondi" />
                 <div className="field">
                   <span>

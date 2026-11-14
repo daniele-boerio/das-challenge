@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
-import type { Attribution, Difficulty, MatchState, Role } from "../types";
-import { DIFF_LABEL, fmtPts } from "../lib/util";
+import type { Attribution, Difficulty, MatchState } from "../types";
+import { DIFF_LABEL, fmtPts, leaders, seatColor } from "../lib/util";
 
 export function DiffBadge({ d, mult }: { d: Difficulty; mult?: number }) {
   return (
@@ -13,30 +13,44 @@ export function DiffBadge({ d, mult }: { d: Difficulty; mult?: number }) {
   );
 }
 
-export function Scoreboard({ state, bump }: { state: MatchState; bump?: boolean }) {
-  const { host, guest } = state.players;
-  const lead =
-    guest && host.total !== guest.total ? (host.total > guest.total ? "host" : "guest") : null;
-  const p = (role: Role) => {
-    const pl = role === "host" ? host : guest;
-    return (
-      <div className={`sb-player sb-${role} ${lead === role ? "lead" : ""} ${state.you === role ? "me" : ""}`}>
-        <div className="sb-name">
-          <span className={`dot ${pl?.online ? "on" : ""}`} />
-          {pl ? pl.name : "In attesa…"}
-          {state.you === role && <small> (tu)</small>}
-        </div>
-        <div className={`sb-total ${bump ? "bump" : ""}`}>{pl ? fmtPts(pl.total) : "–"}</div>
-        {lead === role && <div className="crown">👑</div>}
+export function Scoreboard({ state }: { state: MatchState }) {
+  const lead = leaders(state.players);
+  const many = state.players.length > 2;
+  const solo = state.players.length < 2;
+  const cell = (p: MatchState["players"][number] | null, key: string) => (
+    <div
+      key={key}
+      className={`sb-player ${p && lead.has(p.seat) ? "lead" : ""} ${p && state.you === p.seat ? "me" : ""}`}
+      style={{ background: p ? seatColor(p.seat) : "#b9b0d0" }}
+    >
+      <div className="sb-name">
+        <span className={`dot ${p?.online ? "on" : ""}`} />
+        {p ? p.name : "In attesa…"}
+        {p && state.you === p.seat && <small> (tu)</small>}
       </div>
-    );
-  };
+      <div className="sb-total">{p ? fmtPts(p.total) : "–"}</div>
+      {p && lead.has(p.seat) && <div className="crown">👑</div>}
+    </div>
+  );
+  if (many) {
+    return <div className="scoreboard many">{state.players.map((p) => cell(p, String(p.seat)))}</div>;
+  }
   return (
     <div className="scoreboard">
-      {p("host")}
+      {cell(state.players[0], "a")}
       <div className="sb-vs">VS</div>
-      {p("guest")}
+      {cell(solo ? null : state.players[1], "b")}
     </div>
+  );
+}
+
+/** Il nome di un giocatore col suo colore. */
+export function Who({ state, seat }: { state: MatchState; seat: number }) {
+  const p = state.players.find((x) => x.seat === seat);
+  return (
+    <b className="who" style={{ ["--pc" as any]: seatColor(seat) }}>
+      {p?.name ?? "?"}
+    </b>
   );
 }
 

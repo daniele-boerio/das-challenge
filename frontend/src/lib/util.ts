@@ -1,4 +1,4 @@
-import type { Difficulty, Role } from "../types";
+import type { Difficulty, MatchState, Player } from "../types";
 
 export const DIFF_LABEL: Record<Difficulty, string> = {
   facile: "Facile",
@@ -18,7 +18,29 @@ export function fmtPts(n: number | null | undefined) {
   return Number.isInteger(n) ? String(n) : n.toFixed(1);
 }
 
-export const other = (r: Role): Role => (r === "host" ? "guest" : "host");
+/** Un colore per posto: 0 è chi ha creato la partita. */
+export const SEAT_COLORS = ["#2bb3ff", "#ff5d8f", "#3bceac", "#ffb020", "#9b84ff", "#ff8a3d", "#8fd14f", "#f06bd8"];
+export const seatColor = (seat: number) => SEAT_COLORS[seat % SEAT_COLORS.length];
+
+export const nameOf = (state: MatchState, seat: number | null | undefined) =>
+  state.players.find((p) => p.seat === seat)?.name ?? "?";
+
+/** I giocatori dal primo all'ultimo per punti; a pari punti, per posto. */
+export function ranked<T extends { seat: number }>(items: T[], score: (x: T) => number): T[] {
+  return [...items].sort((a, b) => score(b) - score(a) || a.seat - b.seat);
+}
+
+/** «Daniele», «Daniele e Giulia», «Daniele, Giulia e Marco». */
+export function joinNames(names: string[]) {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} e ${names[names.length - 1]}`;
+}
+
+export const leaders = (players: Player[]) => {
+  const best = Math.max(...players.map((p) => p.total));
+  const top = players.filter((p) => p.total === best);
+  return best > 0 && top.length < players.length ? new Set(top.map((p) => p.seat)) : new Set<number>();
+};
 
 export function fmtDate(epoch: number) {
   return new Date(epoch * 1000).toLocaleDateString("it-IT", {

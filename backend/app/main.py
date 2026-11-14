@@ -26,7 +26,7 @@ from sqlalchemy import or_, select, update
 
 from . import auth, config, db, game, judge, media, references
 from .game import LOCK, GameError
-from .models import Match, Round, User
+from .models import Match, Player, Round, User
 from .realtime import rooms
 from .subjects import DEFAULT_MINUTES, MULTIPLIER, THEMES
 
@@ -34,10 +34,39 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 log = logging.getLogger("das")
 
 
-def state_for(code: str, role: str | None, online: set[str]) -> dict:
+def state_for(code: str, seat: int | None, online: set[int]) -> dict:
     with db.session_scope() as s:
         m = game.get_match(s, code)
-        return game.view(m, role, online)
+        return game.view(m, seat, online)
+
+
+TICK_S = 2.0
+TICKER = True  # nei test è spento: si chiama `tick_all()` a mano
+
+
+def tick_all():
+    """Un giro su tutte le partite in corso: chiude i round scaduti (timer rigido,
+    rincorsa) anche se nessuno tocca niente, e sblocca i giudici appesi."""
+    changed, launch = [], []
+    with LOCK, db.session_scope() as s:
+        for m in s.scalars(select(Match).where(Match.status == "playing")):
+            ch, la = game.tick(m)
+            if ch:
+                changed.append(m.code)
+            if la:
+                launch.append((m.code, game.current_round(m).number))
+    for code, number in launch:
+        start_judge(code, number)
+    for code in changed:
+        rooms.notify(code)
+
+
+def _ticker(stop: threading.Event):
+    while not stop.wait(TICK_S):
+        try:
+            tick_all()
+        except Exception:
+            log.exception("giro del ticker fallito")
 
 
 @asynccontextmanager
@@ -57,7 +86,11 @@ async def lifespan(app: FastAPI):
                 game.maybe_finalize(m, r)
     rooms.loop = asyncio.get_running_loop()
     rooms.state_for = state_for
+    stop = threading.Event()
+    if TICKER:
+        threading.Thread(target=_ticker, args=(stop,), daemon=True).start()
     yield
+    stop.set()
 
 
 app = FastAPI(title="DAS Challenge", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
@@ -88,9 +121,9 @@ def _user(s, uid: int) -> User:
     return s.get(User, uid)
 
 
-def _state(s, m: Match, role: str | None) -> dict:
+def _state(s, m: Match, seat: int | None) -> dict:
     s.flush()
-    return game.view(m, role, rooms.online(m.code))
+    return game.view(m, seat, rooms.online(m.code))
 
 
 # ── configurazione e salute ───────────────────────────────────────────────────
@@ -111,6 +144,7 @@ def get_config():
         "default_minutes": DEFAULT_MINUTES,
         "multipliers": MULTIPLIER,
         "defaults": game.default_settings(),
+        "max_players": game.MAX_PLAYERS,
     }
 
 
@@ -193,27 +227,29 @@ class RoundIn(BaseModel):
 
 class PowerupIn(BaseModel):
     kind: str
+    target: int | None = None
 
 
 class VoteIn(BaseModel):
-    value: float
+    # {posto: voto} per tutte le creazioni degli altri
+    votes: dict[str, float]
 
 
 @app.post("/api/matches")
 def create(body: CreateIn, uid: int = Depends(me)):
     with LOCK, db.session_scope() as s:
         m = game.create_match(s, _user(s, uid), body.settings)
-        return {"code": m.code, "state": _state(s, m, "host")}
+        return {"code": m.code, "state": _state(s, m, 0)}
 
 
 @app.get("/api/matches/{code}")
 def get_state(code: str, uid: int | None = Depends(viewer)):
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
-        role = game.role_of(m, uid)
-        game.check_can_view(m, role)
+        seat = game.seat_of(m, uid)
+        game.check_can_view(m, seat)
         healed = game.heal(m)
-        out = _state(s, m, role)
+        out = _state(s, m, seat)
     if healed:
         rooms.notify(m.code)
     return out
@@ -223,8 +259,8 @@ def get_state(code: str, uid: int | None = Depends(viewer)):
 def join(code: str, uid: int = Depends(me)):
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
-        game.join(s, m, _user(s, uid))
-        out = {"state": _state(s, m, "guest")}
+        seat = game.join(s, m, _user(s, uid))
+        out = {"state": _state(s, m, seat)}
     rooms.notify(m.code)
     return out
 
@@ -238,15 +274,15 @@ def start_round(code: str, body: RoundIn, uid: int = Depends(me)):
     # La foto si cerca fuori dal lock (sono secondi di rete), poi si ricontrolla tutto.
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
-        role = game.require_role(m, uid)
-        game.check_can_start(m, role)
+        seat = game.require_seat(m, uid)
+        game.check_can_start(m, seat)
         difficulty, subject = game.choose_subject(m, body.difficulty)
     image, attribution = _fetch_reference(subject)
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
-        game.check_can_start(m, role)
+        game.check_can_start(m, seat)
         game.create_round(s, m, difficulty, subject, image, attribution)
-        out = _state(s, m, role)
+        out = _state(s, m, seat)
     rooms.notify(code.upper())
     return out
 
@@ -255,11 +291,11 @@ def start_round(code: str, body: RoundIn, uid: int = Depends(me)):
 def use_powerup(code: str, body: PowerupIn, uid: int = Depends(me)):
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
-        role = game.require_role(m, uid)
-        r = game.check_powerup(m, role, body.kind)
+        seat = game.require_seat(m, uid)
+        r, target = game.check_powerup(m, seat, body.kind, body.target)
         if body.kind != "reroll":
-            game.apply_timer_powerup(m, r, role, body.kind)
-            out = _state(s, m, role)
+            game.apply_timer_powerup(m, r, seat, body.kind, target)
+            out = _state(s, m, seat)
             rooms.notify(m.code)
             return out
         number = r.number
@@ -267,18 +303,18 @@ def use_powerup(code: str, body: PowerupIn, uid: int = Depends(me)):
     image, attribution = _fetch_reference(subject)
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
-        r = game.check_powerup(m, role, "reroll")
+        r, _ = game.check_powerup(m, seat, "reroll")
         if r.number != number:
             raise GameError("Il round è cambiato nel frattempo", 409)
-        game.apply_reroll(m, r, role, subject, image, attribution)
-        out = _state(s, m, role)
+        game.apply_reroll(m, r, seat, subject, image, attribution)
+        out = _state(s, m, seat)
     rooms.notify(code.upper())
     return out
 
 
 def _run_judge(code: str, number: int):
     """Il giudice AI gira in un thread suo: chiunque abbia caricato per secondo non
-    resta appeso, e il risultato arriva a entrambi via WebSocket."""
+    resta appeso, e il risultato arriva a tutti via WebSocket."""
     with db.session_scope() as s:
         m = game.get_match(s, code)
         r = game.get_round(m, number)
@@ -286,10 +322,10 @@ def _run_judge(code: str, number: int):
             subject=r.subject,
             difficulty=r.difficulty,
             reference=r.image_file,
-            host_photo=r.host_photo,
-            guest_photo=r.guest_photo,
-            host_name=m.host_name,
-            guest_name=m.guest_name or "",
+            entries=[
+                {"seat": e.seat, "name": game.player(m, e.seat).name, "photo": e.photo}
+                for e in game.delivered(r)
+            ],
         )
     try:
         result, error = judge.judge(**args), None
@@ -322,22 +358,26 @@ def upload_photo(
 ):
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
-        role = game.require_role(m, uid)
-        game.check_upload(m, game.get_round(m, number))
+        seat = game.require_seat(m, uid)
+        game.check_upload(m, game.get_round(m, number), seat)
     data = photo.file.read(config.MAX_UPLOAD_MB * 1024 * 1024 + 1)
     if len(data) > config.MAX_UPLOAD_MB * 1024 * 1024:
         raise GameError(f"La foto supera i {config.MAX_UPLOAD_MB} MB")
     try:
-        name = media.save_image(data, f"r{number}-{role}")
+        name = media.save_image(data, f"r{number}-p{seat}")
     except media.BadImage as exc:
         raise GameError(str(exc))
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
         r = game.get_round(m, number)
-        game.check_upload(m, r)
-        old = game.set_photo(r, role, name)
-        launch = game.after_upload(m, r)
-        out = _state(s, m, role)
+        try:
+            game.check_upload(m, r, seat)
+        except GameError:
+            media.path_of(name).unlink(missing_ok=True)
+            raise
+        old = game.set_photo(m, r, seat, name)
+        launch = game.advance(m, r)
+        out = _state(s, m, seat)
     if old:
         media.path_of(old).unlink(missing_ok=True)
     if launch:
@@ -350,9 +390,20 @@ def upload_photo(
 def vote(code: str, number: int, body: VoteIn, uid: int = Depends(me)):
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
-        role = game.require_role(m, uid)
-        game.vote(m, game.get_round(m, number), role, body.value)
-        out = _state(s, m, role)
+        seat = game.require_seat(m, uid)
+        game.vote(m, game.get_round(m, number), seat, body.votes)
+        out = _state(s, m, seat)
+    rooms.notify(code.upper())
+    return out
+
+
+@app.post("/api/matches/{code}/rounds/{number}/close-votes")
+def close_votes(code: str, number: int, uid: int = Depends(me)):
+    with LOCK, db.session_scope() as s:
+        m = game.get_match(s, code)
+        seat = game.require_seat(m, uid)
+        game.close_votes(m, game.get_round(m, number), seat)
+        out = _state(s, m, seat)
     rooms.notify(code.upper())
     return out
 
@@ -361,9 +412,9 @@ def vote(code: str, number: int, body: VoteIn, uid: int = Depends(me)):
 def finish(code: str, uid: int = Depends(me)):
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
-        role = game.require_role(m, uid)
-        game.finish(m, role)
-        out = _state(s, m, role)
+        seat = game.require_seat(m, uid)
+        game.finish(m, seat)
+        out = _state(s, m, seat)
     rooms.notify(code.upper())
     return out
 
@@ -371,17 +422,17 @@ def finish(code: str, uid: int = Depends(me)):
 @app.post("/api/matches/{code}/rematch")
 def rematch(code: str, uid: int = Depends(me)):
     """La rivincita: stesse regole, partita nuova. Chi la chiede la crea (e ne è
-    l'host); l'altro la trova nello stato della vecchia e ci entra con un tocco."""
+    l'host); gli altri la trovano nello stato della vecchia e ci entrano con un tocco."""
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
-        role = game.require_role(m, uid)
+        game.require_seat(m, uid)
         if m.status != "finished":
             raise GameError("La partita non è ancora finita")
         if m.rematch_code:
             raise GameError("La rivincita c'è già", 409)
         new = game.create_match(s, _user(s, uid), m.settings)
         m.rematch_code = new.code
-        out = {"code": new.code, "state": _state(s, new, "host")}
+        out = {"code": new.code, "state": _state(s, new, 0)}
     rooms.notify(code.upper())
     return out
 
@@ -391,12 +442,13 @@ def rematch(code: str, uid: int = Depends(me)):
 
 @app.get("/api/gallery")
 def gallery(uid: int = Depends(me)):
-    """Solo le partite finite che hai giocato tu, da creatore o da sfidante."""
+    """Solo le partite finite che hai giocato tu. Il testa a testa è per
+    avversario: in quante partite giocate insieme hai fatto più punti tu o lui."""
     with db.session_scope() as s:
         matches = s.scalars(
             select(Match)
             .where(Match.status == "finished")
-            .where(or_(Match.host_user_id == uid, Match.guest_user_id == uid))
+            .where(Match.players.any(Player.user_id == uid))
             .order_by(Match.finished_at.desc())
             .limit(300)
         ).all()
@@ -405,36 +457,42 @@ def gallery(uid: int = Depends(me)):
             if not m.rounds:
                 continue
             t = game.totals(m)
-            w = game.winner(m)
+            w = game.winners(m) or []
+            mine = game.seat_of(m, uid)
             items.append(
                 {
                     "code": m.code,
                     "finished_at": m.finished_at,
-                    "host": {"name": m.host_name, "total": t["host"]},
-                    "guest": {"name": m.guest_name, "total": t["guest"]},
-                    "winner": w,
+                    "players": [{"seat": p.seat, "name": p.name, "total": t.get(p.seat, 0.0)} for p in m.players],
+                    "winners": w,
+                    "you": mine,
                     "rounds": [
                         {
                             "subject": r.subject,
                             "difficulty": r.difficulty,
                             "image": media.url(r.image_file),
-                            "host_photo": media.url(r.host_photo),
-                            "guest_photo": media.url(r.guest_photo),
+                            "photos": [media.url(e.photo) for e in r.entries if e.photo],
                         }
                         for r in m.rounds
                     ],
                 }
             )
-            # Testa a testa per coppia di nomi, a prescindere da chi ha creato la partita.
-            names = sorted([m.host_name, m.guest_name or "?"], key=str.casefold)
-            k = " vs ".join(names)
-            rec = h2h.setdefault(k, {"players": names, "wins": {n: 0 for n in names}, "draws": 0, "matches": 0})
-            rec["matches"] += 1
-            if w == "pari":
-                rec["draws"] += 1
-            elif w:
-                rec["wins"][game.name_of(m, w)] = rec["wins"].get(game.name_of(m, w), 0) + 1
-        return {"matches": items, "head_to_head": list(h2h.values())}
+            for p in m.players:
+                if p.seat == mine:
+                    continue
+                rec = h2h.setdefault(
+                    p.user_id, {"name": p.name, "matches": 0, "wins": 0, "losses": 0, "draws": 0}
+                )
+                rec["matches"] += 1
+                a, b = t.get(mine, 0), t.get(p.seat, 0)
+                rec["wins" if a > b else "losses" if a < b else "draws"] += 1
+        played = len(items)
+        won = sum(1 for it in items if it["you"] in it["winners"] and len(it["winners"]) == 1)
+        return {
+            "matches": items,
+            "head_to_head": sorted(h2h.values(), key=lambda x: -x["matches"]),
+            "stats": {"played": played, "won": won},
+        }
 
 
 # ── immagini ──────────────────────────────────────────────────────────────────
@@ -459,21 +517,21 @@ async def ws(websocket: WebSocket, code: str):
     code = code.upper()
     from starlette.concurrency import run_in_threadpool
 
-    def _role():
+    def _seat():
         with db.session_scope() as s:
             u = auth.user_from_token(s, auth.token_of(websocket))
             m = game.get_match(s, code)
-            role = game.role_of(m, u.id if u else None)
-            game.check_can_view(m, role)
-            return role
+            seat = game.seat_of(m, u.id if u else None)
+            game.check_can_view(m, seat)
+            return seat
 
     try:
-        role = await run_in_threadpool(_role)
+        seat = await run_in_threadpool(_seat)
     except GameError as exc:
         await websocket.close(code=4403 if exc.status == 403 else 4404)
         return
     await websocket.accept()
-    await rooms.join(code, websocket, role)
+    await rooms.join(code, websocket, seat)
     try:
         while True:
             msg = await websocket.receive_text()

@@ -1,7 +1,8 @@
-"""Il giudice AI (un modello via OpenRouter) guarda la reference e le due creazioni e dà i voti.
+"""Il giudice AI (un modello via OpenRouter) guarda la reference e le creazioni e dà i voti.
 
-Le due foto arrivano come «A» e «B» in ordine casuale: l'ordine non deve dire chi
-ha creato la partita. I nomi servono solo perché commenti e verdetto suonino naturali.
+Le foto arrivano come «A», «B», «C»… in ordine casuale: l'ordine non deve dire chi
+ha creato la partita né chi ha consegnato prima. I nomi servono solo perché
+commenti e verdetto suonino naturali.
 """
 
 import base64
@@ -16,33 +17,31 @@ from . import config, media
 SCHEMA = {
     "type": "object",
     "properties": {
-        "A": {
-            "type": "object",
-            "properties": {
-                "score": {"type": "number"},
-                "comment": {"type": "string"},
+        "creations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string"},
+                    "score": {"type": "number"},
+                    "comment": {"type": "string"},
+                },
+                "required": ["label", "score", "comment"],
+                "additionalProperties": False,
             },
-            "required": ["score", "comment"],
-            "additionalProperties": False,
-        },
-        "B": {
-            "type": "object",
-            "properties": {
-                "score": {"type": "number"},
-                "comment": {"type": "string"},
-            },
-            "required": ["score", "comment"],
-            "additionalProperties": False,
         },
         "verdict": {"type": "string"},
     },
-    "required": ["A", "B", "verdict"],
+    "required": ["creations", "verdict"],
     "additionalProperties": False,
 }
 
-SYSTEM = """Sei il giudice di una sfida di scultura fra due persone che usano il DAS, \
+LABELS = "ABCDEFGH"
+
+SYSTEM = """Sei il giudice di una sfida di scultura fra amici che usano il DAS, \
 una pasta da modellare che si asciuga all'aria. Ricevi la foto di riferimento e le foto \
-delle due creazioni, A e B. Devi dire quanto ciascuna si avvicina al soggetto della reference.
+delle creazioni, indicate con una lettera (A, B, C…). Devi dire quanto ciascuna si \
+avvicina al soggetto della reference.
 
 Come giudicare:
 - Conta la forma: silhouette, proporzioni, posa, volumi e i dettagli riconoscibili.
@@ -53,11 +52,12 @@ e dillo.
 - Tieni conto della difficoltà: su un soggetto difficile anche un risultato approssimativo \
 merita un voto discreto, se si riconosce.
 - Voti da 0 a 10 con al massimo un decimale. Usa tutta la scala e non dare lo stesso voto \
-alle due creazioni, a meno che siano davvero equivalenti.
+a due creazioni, a meno che siano davvero equivalenti.
 
 Scrivi in italiano. Per ciascuna creazione un commento di una o due frasi, concreto \
 (cosa è riuscito, cosa manca) e simpatico, mai cattivo. Il verdetto è una frase sola, \
-da presentatore di gara, che dice chi vince il round e perché."""
+da presentatore di gara, che dice chi vince il round e perché. Nella risposta dai un \
+elemento di `creations` per ogni lettera ricevuta, con la sua `label`."""
 
 
 def available() -> bool:
@@ -86,35 +86,32 @@ def judge(
     subject: str,
     difficulty: str,
     reference: str | None,
-    host_photo: str,
-    guest_photo: str,
-    host_name: str = "A",
-    guest_name: str = "B",
+    entries: list[dict],
     rng: random.Random | None = None,
 ) -> dict:
-    """{"host": {"score", "comment"}, "guest": {...}, "verdict"}. Solleva in caso di errore."""
+    """`entries` = [{"seat", "name", "photo"}]. Restituisce
+    {"entries": {"<posto>": {"score", "comment"}}, "verdict"}. Solleva in caso di errore."""
     rng = rng or random
-    host_is_a = rng.random() < 0.5
-    a, b = (host_photo, guest_photo) if host_is_a else (guest_photo, host_photo)
-    na, nb = (host_name, guest_name) if host_is_a else (guest_name, host_name)
+    order = list(entries)
+    rng.shuffle(order)
+    by_label = {LABELS[i]: e for i, e in enumerate(order)}
 
     content: list[dict] = []
     if reference:
         content += [{"type": "text", "text": "Foto di riferimento:"}, _image_part(reference)]
-    content += [
-        {"type": "text", "text": f"Creazione A, di {na}:"},
-        _image_part(a),
-        {"type": "text", "text": f"Creazione B, di {nb}:"},
-        _image_part(b),
+    for label, e in by_label.items():
+        content += [{"type": "text", "text": f"Creazione {label}, di {e['name']}:"}, _image_part(e["photo"])]
+    names = ", ".join(f"{e['name']} ({label})" for label, e in by_label.items())
+    content.append(
         {
             "type": "text",
-            "text": f"Soggetto: {subject}. Difficoltà: {difficulty}. "
-            f"Nei commenti e nel verdetto chiama i due per nome ({na} e {nb}), non A e B. "
+            "text": f"Soggetto: {subject}. Difficoltà: {difficulty}. Creazioni: {names}. "
+            "Nei commenti e nel verdetto chiama tutti per nome, non per lettera. "
             "Rispondi solo con il JSON richiesto."
             + ("" if reference else " La foto di riferimento non era disponibile: giudica "
                "quanto ciascuna creazione rappresenta bene il soggetto."),
-        },
-    ]
+        }
+    )
 
     r = httpx.post(
         f"{config.AI_BASE_URL}/chat/completions",
@@ -125,7 +122,7 @@ def judge(
         },
         json={
             "model": config.AI_MODEL,
-            "max_tokens": 2000,
+            "max_tokens": 1000 + 400 * len(entries),
             "messages": [
                 {"role": "system", "content": SYSTEM},
                 {"role": "user", "content": content},
@@ -146,10 +143,14 @@ def judge(
     choice = (body.get("choices") or [{}])[0]
     data = _parse((choice.get("message") or {}).get("content") or "")
 
-    def clean(x: dict) -> dict:
-        score = max(0.0, min(10.0, round(float(x["score"]), 1)))
-        return {"score": score, "comment": str(x["comment"]).strip()}
-
-    ra, rb = clean(data["A"]), clean(data["B"])
-    host, guest = (ra, rb) if host_is_a else (rb, ra)
-    return {"host": host, "guest": guest, "verdict": str(data["verdict"]).strip()}
+    out: dict[str, dict] = {}
+    for c in data.get("creations") or []:
+        e = by_label.get(str(c.get("label", "")).strip().upper()[:1])
+        if not e:
+            continue
+        score = max(0.0, min(10.0, round(float(c["score"]), 1)))
+        out[str(e["seat"])] = {"score": score, "comment": str(c.get("comment", "")).strip()}
+    missing = [e["name"] for e in entries if str(e["seat"]) not in out]
+    if missing:
+        raise ValueError(f"Il giudice AI non ha votato {', '.join(missing)}")
+    return {"entries": out, "verdict": str(data.get("verdict", "")).strip()}
