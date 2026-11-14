@@ -1,17 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Trophy } from "lucide-react";
-import { api, prefs } from "../api";
-import { useApp } from "../App";
+import { api } from "../api";
 import { DiffBadge, LoadError } from "../components/bits";
 import { fmtDate, fmtPts } from "../lib/util";
 import type { Gallery } from "../types";
 
 export default function GalleryPage() {
-  const { config } = useApp();
   const [data, setData] = useState<Gallery | null>(null);
   const [error, setError] = useState<{ msg: string; status: number } | null>(null);
-  const [access, setAccess] = useState(prefs.access());
 
   const load = useCallback(() => {
     setError(null);
@@ -22,26 +19,6 @@ export default function GalleryPage() {
   }, []);
   useEffect(load, [load]);
 
-  if (error?.status === 401 || (config?.access_required && !prefs.access() && !data)) {
-    return (
-      <section className="card pop">
-        <h2>Galleria</h2>
-        <label className="field">
-          <span>Codice di accesso</span>
-          <input value={access} onChange={(e) => setAccess(e.target.value)} />
-        </label>
-        <button
-          className="btn btn-yellow"
-          onClick={() => {
-            prefs.setAccess(access.trim());
-            load();
-          }}
-        >
-          Entra
-        </button>
-      </section>
-    );
-  }
   if (error) return <LoadError message={error.msg} onRetry={load} />;
   if (!data)
     return (
@@ -58,6 +35,7 @@ export default function GalleryPage() {
         </Link>
       </div>
       <h1 className="title small-title">Galleria</h1>
+      <p className="gal-note">Qui ci sono solo le sfide che hai giocato tu.</p>
 
       {data.head_to_head.map((h) => {
         const [a, b] = h.players;

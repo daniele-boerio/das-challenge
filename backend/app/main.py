@@ -5,7 +5,6 @@ Le rotte HTTP sono `def` (girano nel threadpool), solo il WebSocket è async.
 """
 
 import logging
-import secrets
 import threading
 from contextlib import asynccontextmanager
 
@@ -14,20 +13,20 @@ from fastapi import (
     Depends,
     FastAPI,
     File,
-    Header,
     HTTPException,
     Request,
+    Response,
     UploadFile,
     WebSocket,
     WebSocketDisconnect,
 )
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 
-from . import config, db, game, judge, media, references
+from . import auth, config, db, game, judge, media, references
 from .game import LOCK, GameError
-from .models import Match, Round
+from .models import Match, Round, User
 from .realtime import rooms
 from .subjects import DEFAULT_MINUTES, MULTIPLIER, THEMES
 
@@ -72,15 +71,21 @@ def _game_error(_: Request, exc: GameError):
 # ── dipendenze ────────────────────────────────────────────────────────────────
 
 
-def require_access(x_access_code: str | None = Header(default=None)):
-    if config.ACCESS_CODE and not secrets.compare_digest(
-        (x_access_code or "").strip(), config.ACCESS_CODE
-    ):
-        raise HTTPException(401, "Codice di accesso sbagliato")
+def viewer(request: Request) -> int | None:
+    """L'id dell'utente collegato, se c'è (e ha scelto il nome)."""
+    with db.session_scope() as s:
+        u = auth.user_from_token(s, auth.token_of(request))
+        return u.id if u and u.name else None
 
 
-def player_token(x_player_token: str | None = Header(default=None)) -> str | None:
-    return x_player_token
+def me(request: Request) -> int:
+    """Come `viewer`, ma obbligatorio."""
+    with db.session_scope() as s:
+        return auth.require_named(auth.user_from_token(s, auth.token_of(request))).id
+
+
+def _user(s, uid: int) -> User:
+    return s.get(User, uid)
 
 
 def _state(s, m: Match, role: str | None) -> dict:
@@ -101,7 +106,6 @@ def health():
 @app.get("/api/config")
 def get_config():
     return {
-        "access_required": bool(config.ACCESS_CODE),
         "ai_available": judge.available(),
         "themes": THEMES,
         "default_minutes": DEFAULT_MINUTES,
@@ -110,8 +114,69 @@ def get_config():
     }
 
 
-@app.post("/api/access/check", dependencies=[Depends(require_access)])
-def check_access():
+# ── accesso ───────────────────────────────────────────────────────────────────
+
+
+class EmailIn(BaseModel):
+    email: str = Field(max_length=254)
+
+
+class VerifyIn(BaseModel):
+    email: str = Field(max_length=254)
+    code: str = Field(max_length=12)
+
+
+class NameIn(BaseModel):
+    name: str = Field(max_length=60)
+
+
+def _me_out(u: User | None) -> dict:
+    if not u:
+        return {"user": None}
+    return {"user": {"id": u.id, "email": u.email, "name": u.name}}
+
+
+@app.get("/api/auth/me")
+def auth_me(request: Request):
+    with db.session_scope() as s:
+        return _me_out(auth.user_from_token(s, auth.token_of(request)))
+
+
+@app.post("/api/auth/request")
+def auth_request(body: EmailIn):
+    with db.session_scope() as s:
+        code = auth.request_code(s, body.email)
+        email = auth.clean_email(body.email)
+    try:
+        auth.send_code_mail(email, code)
+    except Exception as exc:
+        log.exception("invio del codice fallito")
+        raise GameError("Non riesco a mandare la mail: riprova fra poco", 502) from exc
+    return {"ok": True}
+
+
+@app.post("/api/auth/verify")
+def auth_verify(body: VerifyIn, response: Response):
+    with db.session_scope() as s:
+        u = auth.verify_code(s, body.email, body.code)
+        auth.start_session(s, u, response)
+        return _me_out(u)
+
+
+@app.post("/api/auth/name")
+def auth_name(body: NameIn, request: Request):
+    with db.session_scope() as s:
+        u = auth.user_from_token(s, auth.token_of(request))
+        if not u:
+            raise HTTPException(401, "Devi accedere")
+        auth.set_name(u, body.name)
+        return _me_out(u)
+
+
+@app.post("/api/auth/logout")
+def auth_logout(request: Request, response: Response):
+    with db.session_scope() as s:
+        auth.end_session(s, auth.token_of(request), response)
     return {"ok": True}
 
 
@@ -119,12 +184,7 @@ def check_access():
 
 
 class CreateIn(BaseModel):
-    name: str = Field(max_length=60)
     settings: dict | None = None
-
-
-class JoinIn(BaseModel):
-    name: str = Field(max_length=60)
 
 
 class RoundIn(BaseModel):
@@ -139,30 +199,32 @@ class VoteIn(BaseModel):
     value: float
 
 
-@app.post("/api/matches", dependencies=[Depends(require_access)])
-def create(body: CreateIn):
+@app.post("/api/matches")
+def create(body: CreateIn, uid: int = Depends(me)):
     with LOCK, db.session_scope() as s:
-        m = game.create_match(s, body.name, body.settings)
-        return {"code": m.code, "token": m.host_token, "state": _state(s, m, "host")}
+        m = game.create_match(s, _user(s, uid), body.settings)
+        return {"code": m.code, "state": _state(s, m, "host")}
 
 
 @app.get("/api/matches/{code}")
-def get_state(code: str, token: str | None = Depends(player_token)):
+def get_state(code: str, uid: int | None = Depends(viewer)):
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
+        role = game.role_of(m, uid)
+        game.check_can_view(m, role)
         healed = game.heal(m)
-        out = _state(s, m, game.role_of(m, token))
+        out = _state(s, m, role)
     if healed:
         rooms.notify(m.code)
     return out
 
 
 @app.post("/api/matches/{code}/join")
-def join(code: str, body: JoinIn):
+def join(code: str, uid: int = Depends(me)):
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
-        token = game.join(s, m, body.name)
-        out = {"token": token, "state": _state(s, m, "guest")}
+        game.join(s, m, _user(s, uid))
+        out = {"state": _state(s, m, "guest")}
     rooms.notify(m.code)
     return out
 
@@ -172,11 +234,11 @@ def _fetch_reference(subject: tuple):
 
 
 @app.post("/api/matches/{code}/rounds")
-def start_round(code: str, body: RoundIn, token: str | None = Depends(player_token)):
+def start_round(code: str, body: RoundIn, uid: int = Depends(me)):
     # La foto si cerca fuori dal lock (sono secondi di rete), poi si ricontrolla tutto.
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
-        role = game.require_role(m, token)
+        role = game.require_role(m, uid)
         game.check_can_start(m, role)
         difficulty, subject = game.choose_subject(m, body.difficulty)
     image, attribution = _fetch_reference(subject)
@@ -190,10 +252,10 @@ def start_round(code: str, body: RoundIn, token: str | None = Depends(player_tok
 
 
 @app.post("/api/matches/{code}/powerups")
-def use_powerup(code: str, body: PowerupIn, token: str | None = Depends(player_token)):
+def use_powerup(code: str, body: PowerupIn, uid: int = Depends(me)):
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
-        role = game.require_role(m, token)
+        role = game.require_role(m, uid)
         r = game.check_powerup(m, role, body.kind)
         if body.kind != "reroll":
             game.apply_timer_powerup(m, r, role, body.kind)
@@ -256,11 +318,11 @@ def upload_photo(
     code: str,
     number: int,
     photo: UploadFile = File(...),
-    token: str | None = Depends(player_token),
+    uid: int = Depends(me),
 ):
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
-        role = game.require_role(m, token)
+        role = game.require_role(m, uid)
         game.check_upload(m, game.get_round(m, number))
     data = photo.file.read(config.MAX_UPLOAD_MB * 1024 * 1024 + 1)
     if len(data) > config.MAX_UPLOAD_MB * 1024 * 1024:
@@ -285,10 +347,10 @@ def upload_photo(
 
 
 @app.post("/api/matches/{code}/rounds/{number}/vote")
-def vote(code: str, number: int, body: VoteIn, token: str | None = Depends(player_token)):
+def vote(code: str, number: int, body: VoteIn, uid: int = Depends(me)):
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
-        role = game.require_role(m, token)
+        role = game.require_role(m, uid)
         game.vote(m, game.get_round(m, number), role, body.value)
         out = _state(s, m, role)
     rooms.notify(code.upper())
@@ -296,10 +358,10 @@ def vote(code: str, number: int, body: VoteIn, token: str | None = Depends(playe
 
 
 @app.post("/api/matches/{code}/finish")
-def finish(code: str, token: str | None = Depends(player_token)):
+def finish(code: str, uid: int = Depends(me)):
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
-        role = game.require_role(m, token)
+        role = game.require_role(m, uid)
         game.finish(m, role)
         out = _state(s, m, role)
     rooms.notify(code.upper())
@@ -307,19 +369,19 @@ def finish(code: str, token: str | None = Depends(player_token)):
 
 
 @app.post("/api/matches/{code}/rematch")
-def rematch(code: str, token: str | None = Depends(player_token)):
+def rematch(code: str, uid: int = Depends(me)):
     """La rivincita: stesse regole, partita nuova. Chi la chiede la crea (e ne è
     l'host); l'altro la trova nello stato della vecchia e ci entra con un tocco."""
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
-        role = game.require_role(m, token)
+        role = game.require_role(m, uid)
         if m.status != "finished":
             raise GameError("La partita non è ancora finita")
         if m.rematch_code:
             raise GameError("La rivincita c'è già", 409)
-        new = game.create_match(s, game.name_of(m, role), m.settings)
+        new = game.create_match(s, _user(s, uid), m.settings)
         m.rematch_code = new.code
-        out = {"code": new.code, "token": new.host_token, "state": _state(s, new, "host")}
+        out = {"code": new.code, "state": _state(s, new, "host")}
     rooms.notify(code.upper())
     return out
 
@@ -327,11 +389,16 @@ def rematch(code: str, token: str | None = Depends(player_token)):
 # ── galleria ──────────────────────────────────────────────────────────────────
 
 
-@app.get("/api/gallery", dependencies=[Depends(require_access)])
-def gallery():
+@app.get("/api/gallery")
+def gallery(uid: int = Depends(me)):
+    """Solo le partite finite che hai giocato tu, da creatore o da sfidante."""
     with db.session_scope() as s:
         matches = s.scalars(
-            select(Match).where(Match.status == "finished").order_by(Match.finished_at.desc()).limit(200)
+            select(Match)
+            .where(Match.status == "finished")
+            .where(or_(Match.host_user_id == uid, Match.guest_user_id == uid))
+            .order_by(Match.finished_at.desc())
+            .limit(300)
         ).all()
         items, h2h = [], {}
         for m in matches:
@@ -388,19 +455,22 @@ def get_media(name: str):
 
 
 @app.websocket("/api/ws/{code}")
-async def ws(websocket: WebSocket, code: str, token: str | None = None):
+async def ws(websocket: WebSocket, code: str):
     code = code.upper()
     from starlette.concurrency import run_in_threadpool
 
     def _role():
         with db.session_scope() as s:
+            u = auth.user_from_token(s, auth.token_of(websocket))
             m = game.get_match(s, code)
-            return game.role_of(m, token)
+            role = game.role_of(m, u.id if u else None)
+            game.check_can_view(m, role)
+            return role
 
     try:
         role = await run_in_threadpool(_role)
-    except GameError:
-        await websocket.close(code=4404)
+    except GameError as exc:
+        await websocket.close(code=4403 if exc.status == 403 else 4404)
         return
     await websocket.accept()
     await rooms.join(code, websocket, role)

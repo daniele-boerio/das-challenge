@@ -6,8 +6,10 @@ alla fine carica la foto. Si vota a vicenda oppure decide un giudice AI. Vince c
 
 ## Come si gioca
 
+0. Si entra con la mail: arriva un codice di 6 cifre, la prima volta si sceglie il nome, e poi
+   si resta dentro per sempre su quel dispositivo.
 1. Chi crea la sfida sceglie le regole e manda il link (o il codice di 4 lettere).
-2. L'altro entra dal link, dal suo telefono.
+2. L'altro entra dal link, dal suo telefono. Una partita la vedono solo i due giocatori.
 3. A ogni round chi ha creato la partita sceglie la difficoltà: **facile ×1**, **media ×1,5**,
    **difficile ×2** (oppure casuale). Dopo un «3, 2, 1» compare la reference e parte il timer.
 4. Quando hai finito, o allo scadere, fotografi la tua creazione e la consegni.
@@ -24,7 +26,7 @@ alla fine carica la foto. Si vota a vicenda oppure decide un giudice AI. Vince c
 - **Handicap**: a chi è in testa, oppure a sorpresa (mano non dominante, occhi chiusi per 30 secondi…).
 - **Round a memoria**: ogni tanto la reference sparisce dopo 30 secondi.
 - **Temi**: misto, animali, cibo, oggetti di casa, natura, fantasy.
-- **Galleria**: tutte le sfide finite con reference e foto, e il conto delle vittorie fra voi.
+- **Galleria**: le *tue* sfide finite con reference e foto, e il conto delle vittorie con ogni avversario.
 
 ## Da dove vengono le reference
 
@@ -57,7 +59,9 @@ cd frontend && npm install && npm run dev   # http://localhost:3000
 | --- | --- |
 | `OPENROUTER_API_KEY` | Accende il giudice AI. Senza, si gioca solo col voto reciproco. |
 | `AI_MODEL` | Slug OpenRouter del modello (default `anthropic/claude-opus-4-8`). |
-| `ACCESS_CODE` | Facoltativo: serve per creare partite e vedere la galleria. Chi entra dal link non ne ha bisogno. |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | Spedizione dei codici di accesso (Gmail: `smtp.gmail.com`, 587, la tua mail, una password per le app). Senza `SMTP_HOST` il codice compare nei log del backend. |
+| `ALLOWED_EMAILS` | Facoltativo: elenco di mail separate da virgola che possono entrare. Vuoto = chiunque. |
+| `COOKIE_SECURE` | `true` in produzione (default nel compose), `false` in locale su http. |
 
 Le chiavi stanno **solo** nelle variabili di Coolify, mai nel repository. Database e foto vivono
 nel volume `das-data` (`/data` nel container): è l'unica cosa da mettere nei backup.

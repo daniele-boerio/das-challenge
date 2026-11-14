@@ -1,114 +1,162 @@
+import pytest
+from starlette.websockets import WebSocketDisconnect
+
 from app import config, game, judge
-from tests.conftest import H
+from tests.conftest import login, new_player
 
 
 def setup_match(client, settings=None):
-    r = client.post("/api/matches", json={"name": "Daniele", "settings": settings or {"judge": "voto"}})
+    """Daniele (sul client principale) crea, Giulia (su un altro dispositivo) entra."""
+    host = login(client, "dani@example.com", "Daniele")
+    r = host.post("/api/matches", json={"settings": settings or {"judge": "voto"}})
     assert r.status_code == 200, r.text
-    code, host = r.json()["code"], r.json()["token"]
-    r = client.post(f"/api/matches/{code}/join", json={"name": "Giulia"})
+    code = r.json()["code"]
+    guest = new_player(client, "giulia@example.com", "Giulia")
+    r = guest.post(f"/api/matches/{code}/join")
     assert r.status_code == 200, r.text
-    return code, host, r.json()["token"]
+    return code, host, guest
 
 
-def upload(client, code, n, token, jpeg):
-    return client.post(
+def upload(player, code, n, jpeg):
+    return player.post(
         f"/api/matches/{code}/rounds/{n}/photo",
         files={"photo": ("p.jpg", jpeg(), "image/jpeg")},
-        headers=H(token),
     )
+
+
+def play_round(code, host, guest, jpeg, n=1, votes=(5, 6), difficulty="facile"):
+    host.post(f"/api/matches/{code}/rounds", json={"difficulty": difficulty})
+    upload(host, code, n, jpeg)
+    upload(guest, code, n, jpeg)
+    host.post(f"/api/matches/{code}/rounds/{n}/vote", json={"value": votes[0]})
+    return guest.post(f"/api/matches/{code}/rounds/{n}/vote", json={"value": votes[1]}).json()
+
+
+# ── accesso ───────────────────────────────────────────────────────────────────
+
+
+def test_login_with_code_and_name(app_env):
+    client, _ = app_env
+    assert client.get("/api/auth/me").json() == {"user": None}
+    assert client.post("/api/auth/request", json={"email": "Dani@Example.com"}).status_code == 200
+    code = client.sent_codes["dani@example.com"]
+    bad = "000000" if code != "000000" else "111111"
+    r = client.post("/api/auth/verify", json={"email": "dani@example.com", "code": bad})
+    assert r.status_code == 400 and "tentativi" in r.json()["detail"]
+    r = client.post("/api/auth/verify", json={"email": "dani@example.com", "code": code})
+    assert r.status_code == 200
+    assert r.json()["user"]["name"] is None
+    # senza nome non si gioca
+    assert client.post("/api/matches", json={}).status_code == 409
+    client.post("/api/auth/name", json={"name": "Daniele"})
+    me = client.get("/api/auth/me").json()["user"]
+    assert me["email"] == "dani@example.com" and me["name"] == "Daniele"
+    # il codice si usa una volta sola
+    assert client.post("/api/auth/verify", json={"email": "dani@example.com", "code": code}).status_code == 400
+
+
+def test_code_resend_cooldown_and_allowlist(app_env):
+    client, mp = app_env
+    client.post("/api/auth/request", json={"email": "a@example.com"})
+    assert client.post("/api/auth/request", json={"email": "a@example.com"}).status_code == 429
+    mp.setattr(config, "ALLOWED_EMAILS", {"ok@example.com"})
+    assert client.post("/api/auth/request", json={"email": "no@example.com"}).status_code == 403
+    assert client.post("/api/auth/request", json={"email": "ok@example.com"}).status_code == 200
+
+
+def test_logged_out_cannot_play(app_env):
+    client, _ = app_env
+    assert client.post("/api/matches", json={}).status_code == 401
+    assert client.get("/api/gallery").status_code == 401
+
+
+# ── partita ───────────────────────────────────────────────────────────────────
 
 
 def test_create_join_and_full(app_env):
     client, _ = app_env
     code, host, guest = setup_match(client)
-    st = client.get(f"/api/matches/{code}", headers=H(guest)).json()
+    st = guest.get(f"/api/matches/{code}").json()
     assert st["you"] == "guest" and st["status"] == "ready"
     assert st["players"]["guest"]["name"] == "Giulia"
-    assert client.post(f"/api/matches/{code}/join", json={"name": "Terzo"}).status_code == 409
+    third = new_player(client, "terzo@example.com", "Terzo")
+    assert third.post(f"/api/matches/{code}/join").status_code == 409
+
+
+def test_cannot_join_own_match(app_env):
+    client, _ = app_env
+    host = login(client, "dani@example.com", "Daniele")
+    code = host.post("/api/matches", json={}).json()["code"]
+    assert host.post(f"/api/matches/{code}/join").status_code == 400
 
 
 def test_only_host_starts_round(app_env):
     client, _ = app_env
     code, host, guest = setup_match(client)
-    assert client.post(f"/api/matches/{code}/rounds", json={}, headers=H(guest)).status_code == 403
-    r = client.post(f"/api/matches/{code}/rounds", json={"difficulty": "difficile"}, headers=H(host))
+    assert guest.post(f"/api/matches/{code}/rounds", json={}).status_code == 403
+    r = host.post(f"/api/matches/{code}/rounds", json={"difficulty": "difficile"})
     assert r.status_code == 200, r.text
     rnd = r.json()["rounds"][0]
     assert rnd["difficulty"] == "difficile" and rnd["multiplier"] == 2.0
     assert rnd["image"].startswith("/api/media/")
     assert rnd["duration_s"] == 40 * 60
-    # un secondo round non parte finché il primo è aperto
-    assert client.post(f"/api/matches/{code}/rounds", json={}, headers=H(host)).status_code == 409
+    assert host.post(f"/api/matches/{code}/rounds", json={}).status_code == 409
 
 
 def test_vote_flow_hides_until_both(app_env, jpeg):
     client, _ = app_env
     code, host, guest = setup_match(client, {"judge": "voto", "rounds": 2})
-    client.post(f"/api/matches/{code}/rounds", json={"difficulty": "media"}, headers=H(host))
-    st = upload(client, code, 1, host, jpeg).json()
-    rnd = st["rounds"][0]
+    host.post(f"/api/matches/{code}/rounds", json={"difficulty": "media"})
+    rnd = upload(host, code, 1, jpeg).json()["rounds"][0]
     assert rnd["status"] == "sculpting" and rnd["delivered"]["host"]
-    # l'avversaria non vede la mia foto prima di aver consegnato
-    st_g = client.get(f"/api/matches/{code}", headers=H(guest)).json()
-    assert st_g["rounds"][0]["photos"]["host"] is None
-    st = upload(client, code, 1, guest, jpeg).json()
-    assert st["rounds"][0]["status"] == "judging"
-    assert st["rounds"][0]["photos"]["host"]
+    assert guest.get(f"/api/matches/{code}").json()["rounds"][0]["photos"]["host"] is None
+    st = upload(guest, code, 1, jpeg).json()
+    assert st["rounds"][0]["status"] == "judging" and st["rounds"][0]["photos"]["host"]
 
-    st = client.post(f"/api/matches/{code}/rounds/1/vote", json={"value": 8}, headers=H(host)).json()
+    st = host.post(f"/api/matches/{code}/rounds/1/vote", json={"value": 8}).json()
     assert st["rounds"][0]["votes"]["mine"] == 8
-    st_g = client.get(f"/api/matches/{code}", headers=H(guest)).json()
-    assert "host" not in st_g["rounds"][0]["votes"]  # voto ancora nascosto
-    st = client.post(f"/api/matches/{code}/rounds/1/vote", json={"value": 6.5}, headers=H(guest)).json()
+    assert "host" not in guest.get(f"/api/matches/{code}").json()["rounds"][0]["votes"]
+    st = guest.post(f"/api/matches/{code}/rounds/1/vote", json={"value": 6.5}).json()
     rnd = st["rounds"][0]
     assert rnd["status"] == "done"
-    # host ha ricevuto 6.5 da guest, ×1.5 in media
     assert rnd["scores"] == {"host": 6.5, "guest": 8.0}
     assert rnd["points"] == {"host": 9.8, "guest": 12.0}
-    assert st["status"] == "ready"
-    assert st["players"]["guest"]["total"] == 12.0
+    assert st["status"] == "ready" and st["players"]["guest"]["total"] == 12.0
 
 
 def test_match_ends_after_last_round_and_rematch(app_env, jpeg):
     client, _ = app_env
     code, host, guest = setup_match(client, {"judge": "voto", "rounds": 1})
-    client.post(f"/api/matches/{code}/rounds", json={"difficulty": "facile"}, headers=H(host))
-    upload(client, code, 1, host, jpeg)
-    upload(client, code, 1, guest, jpeg)
-    client.post(f"/api/matches/{code}/rounds/1/vote", json={"value": 3}, headers=H(host))
-    st = client.post(f"/api/matches/{code}/rounds/1/vote", json={"value": 9}, headers=H(guest)).json()
+    st = play_round(code, host, guest, jpeg, votes=(3, 9))
     assert st["status"] == "finished" and st["winner"] == "host"
 
-    g = client.get("/api/gallery").json()
+    g = guest.get("/api/gallery").json()
     assert g["matches"][0]["code"] == code
     h2h = g["head_to_head"][0]
     assert h2h["wins"]["Daniele"] == 1 and h2h["matches"] == 1
 
-    r = client.post(f"/api/matches/{code}/rematch", headers=H(guest))
+    r = guest.post(f"/api/matches/{code}/rematch")
     assert r.status_code == 200
     new = r.json()["code"]
-    assert client.get(f"/api/matches/{code}").json()["rematch_code"] == new
+    assert host.get(f"/api/matches/{code}").json()["rematch_code"] == new
     assert r.json()["state"]["players"]["host"]["name"] == "Giulia"
+    assert host.post(f"/api/matches/{new}/join").status_code == 200
 
 
 def test_powerups(app_env):
     client, _ = app_env
     code, host, guest = setup_match(client)
-    st = client.post(f"/api/matches/{code}/rounds", json={"difficulty": "facile"}, headers=H(host)).json()
-    base = st["rounds"][0]["end_at"]
-    st = client.post(f"/api/matches/{code}/powerups", json={"kind": "extra"}, headers=H(host)).json()
+    base = host.post(f"/api/matches/{code}/rounds", json={"difficulty": "facile"}).json()["rounds"][0]["end_at"]
+    st = host.post(f"/api/matches/{code}/powerups", json={"kind": "extra"}).json()
     assert st["rounds"][0]["end_at"]["host"] == base["host"] + 120
-    st = client.post(f"/api/matches/{code}/powerups", json={"kind": "sabotage"}, headers=H(host)).json()
+    st = host.post(f"/api/matches/{code}/powerups", json={"kind": "sabotage"}).json()
     assert st["rounds"][0]["end_at"]["guest"] == base["guest"] - 60
     assert st["players"]["host"]["powerups"] == {"extra": False, "sabotage": False, "reroll": True}
-    # una volta sola per partita
-    assert client.post(f"/api/matches/{code}/powerups", json={"kind": "extra"}, headers=H(host)).status_code == 400
+    assert host.post(f"/api/matches/{code}/powerups", json={"kind": "extra"}).status_code == 400
     old_subject = st["rounds"][0]["subject"]
-    st = client.post(f"/api/matches/{code}/powerups", json={"kind": "reroll"}, headers=H(guest)).json()
-    rnd = st["rounds"][0]
+    rnd = guest.post(f"/api/matches/{code}/powerups", json={"kind": "reroll"}).json()["rounds"][0]
     assert rnd["subject"] != old_subject
-    assert rnd["end_at"]["host"] == rnd["end_at"]["guest"]  # il round riparte uguale per tutti
+    assert rnd["end_at"]["host"] == rnd["end_at"]["guest"]
 
 
 def test_ai_judge(app_env, jpeg):
@@ -126,11 +174,12 @@ def test_ai_judge(app_env, jpeg):
 
     mp.setattr(judge, "judge", fake)
     code, host, guest = setup_match(client, {"judge": "ai"})
-    client.post(f"/api/matches/{code}/rounds", json={"difficulty": "difficile"}, headers=H(host))
-    upload(client, code, 1, host, jpeg)
-    upload(client, code, 1, guest, jpeg)
-    rnd = client.get(f"/api/matches/{code}", headers=H(host)).json()["rounds"][0]
+    host.post(f"/api/matches/{code}/rounds", json={"difficulty": "difficile"})
+    upload(host, code, 1, jpeg)
+    upload(guest, code, 1, jpeg)
+    rnd = host.get(f"/api/matches/{code}").json()["rounds"][0]
     assert len(calls) == 1 and calls[0]["reference"]
+    assert calls[0]["host_name"] == "Daniele" and calls[0]["guest_name"] == "Giulia"
     assert rnd["status"] == "done"
     assert rnd["points"] == {"host": 14.0, "guest": 18.0}
     assert rnd["ai"]["result"]["verdict"] == "Vince Giulia"
@@ -145,53 +194,70 @@ def test_ai_failure_falls_back_to_votes(app_env, jpeg):
 
     mp.setattr(judge, "judge", boom)
     code, host, guest = setup_match(client, {"judge": "ai"})
-    client.post(f"/api/matches/{code}/rounds", json={"difficulty": "facile"}, headers=H(host))
-    upload(client, code, 1, host, jpeg)
-    upload(client, code, 1, guest, jpeg)
-    rnd = client.get(f"/api/matches/{code}", headers=H(host)).json()["rounds"][0]
+    host.post(f"/api/matches/{code}/rounds", json={"difficulty": "facile"})
+    upload(host, code, 1, jpeg)
+    upload(guest, code, 1, jpeg)
+    rnd = host.get(f"/api/matches/{code}").json()["rounds"][0]
     assert rnd["status"] == "judging" and rnd["ai"]["status"] == "failed"
     assert rnd["votes"]["needed"]
-    client.post(f"/api/matches/{code}/rounds/1/vote", json={"value": 5}, headers=H(host))
-    st = client.post(f"/api/matches/{code}/rounds/1/vote", json={"value": 5}, headers=H(guest)).json()
+    host.post(f"/api/matches/{code}/rounds/1/vote", json={"value": 5})
+    st = guest.post(f"/api/matches/{code}/rounds/1/vote", json={"value": 5}).json()
     assert st["rounds"][0]["status"] == "done"
 
 
 def test_handicap_goes_to_leader(app_env, jpeg):
-    client, mp = app_env
-    code, host, guest = setup_match(client, {"judge": "voto", "handicap": "leader", "memory": False})
-    client.post(f"/api/matches/{code}/rounds", json={"difficulty": "facile"}, headers=H(host))
-    upload(client, code, 1, host, jpeg)
-    upload(client, code, 1, guest, jpeg)
-    client.post(f"/api/matches/{code}/rounds/1/vote", json={"value": 2}, headers=H(host))
-    client.post(f"/api/matches/{code}/rounds/1/vote", json={"value": 9}, headers=H(guest))
-    st = client.post(f"/api/matches/{code}/rounds", json={"difficulty": "facile"}, headers=H(host)).json()
+    client, _ = app_env
+    code, host, guest = setup_match(client, {"judge": "voto", "handicap": "leader", "memory": False, "rounds": 3})
+    play_round(code, host, guest, jpeg, votes=(2, 9))
+    st = host.post(f"/api/matches/{code}/rounds", json={"difficulty": "facile"}).json()
     hc = st["rounds"][1]["handicaps"]
     assert hc["host"] and not hc["guest"]
 
 
-def test_access_code(app_env):
-    client, mp = app_env
-    mp.setattr(config, "ACCESS_CODE", "segreto")
-    assert client.post("/api/matches", json={"name": "X"}).status_code == 401
-    r = client.post("/api/matches", json={"name": "X"}, headers={"X-Access-Code": "segreto"})
-    assert r.status_code == 200
-    # chi entra col link non ha bisogno del codice
-    assert client.post(f"/api/matches/{r.json()['code']}/join", json={"name": "Y"}).status_code == 200
-    assert client.get("/api/gallery").status_code == 401
-
-
-def test_websocket_receives_state(app_env):
+def test_only_players_see_match_and_gallery(app_env, jpeg):
     client, _ = app_env
-    code, host, guest = setup_match(client)
-    with client.websocket_connect(f"/api/ws/{code}?token={guest}") as ws:
+    code, host, guest = setup_match(client, {"judge": "voto", "rounds": 1})
+    outsider = new_player(client, "altro@example.com", "Altro")
+    other_guest = new_player(client, "amico@example.com", "Amico")
+    other_code = outsider.post("/api/matches", json={"settings": {"judge": "voto", "rounds": 1}}).json()["code"]
+    # prima che l'avversario entri la partita si vede (serve per entrare dal link)
+    assert host.get(f"/api/matches/{other_code}").status_code == 200
+    other_guest.post(f"/api/matches/{other_code}/join")
+    assert host.get(f"/api/matches/{other_code}").status_code == 403
+    assert outsider.get(f"/api/matches/{code}").status_code == 403
+
+    play_round(code, host, guest, jpeg)
+    play_round(other_code, outsider, other_guest, jpeg)
+    assert [m["code"] for m in host.get("/api/gallery").json()["matches"]] == [code]
+    assert [m["code"] for m in outsider.get("/api/gallery").json()["matches"]] == [other_code]
+
+
+def test_websocket(app_env):
+    client, _ = app_env
+    # il client principale (quello con il loop dei WebSocket) è l'ospite
+    host = new_player(client, "dani@example.com", "Daniele")
+    code = host.post("/api/matches", json={}).json()["code"]
+    login(client, "giulia@example.com", "Giulia")
+    client.post(f"/api/matches/{code}/join")
+    with client.websocket_connect(f"/api/ws/{code}") as ws:
         msg = ws.receive_json()
         assert msg["type"] == "state" and msg["state"]["you"] == "guest"
         assert msg["state"]["players"]["guest"]["online"]
-        client.post(f"/api/matches/{code}/rounds", json={"difficulty": "facile"}, headers=H(host))
+        host.post(f"/api/matches/{code}/rounds", json={"difficulty": "facile"})
         msg = ws.receive_json()
         assert msg["state"]["status"] == "playing"
         ws.send_text("ping")
         assert ws.receive_json()["type"] == "pong"
+
+
+def test_websocket_refuses_outsiders(app_env):
+    client, _ = app_env
+    code, host, guest = setup_match(client)
+    client.post("/api/auth/logout")
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with client.websocket_connect(f"/api/ws/{code}") as ws:
+            ws.receive_json()
+    assert exc.value.code == 4403
 
 
 def test_settings_are_clamped():
@@ -204,7 +270,7 @@ def test_judge_parse_fallback():
     assert judge._parse('```json\n{"A": 1}\n```') == {"A": 1}
 
 
-def test_judge_request_and_mapping(app_env, jpeg, tmp_path):
+def test_judge_request_and_mapping(app_env, jpeg):
     """Il giudice manda tre immagini a OpenRouter e rimappa A/B su host/guest."""
     import json as _json
     import random
@@ -224,12 +290,11 @@ def test_judge_request_and_mapping(app_env, jpeg, tmp_path):
         return httpx.Response(200, json={"choices": [{"message": {"content": _json.dumps(body)}}]})
 
     mp.setattr(httpx, "post", fake_post)
-    rng = random.Random(0)
     host_is_a = random.Random(0).random() < 0.5
-    out = judge.judge("Mela", "facile", names[0], names[1], names[2], "Dani", "Giu", rng=rng)
+    out = judge.judge("Mela", "facile", names[0], names[1], names[2], "Dani", "Giu", rng=random.Random(0))
     assert sent["url"].endswith("/chat/completions") and sent["auth"] == "Bearer sk-or-test"
     parts = sent["messages"][1]["content"]
     assert sum(1 for p in parts if p["type"] == "image_url") == 3
-    a, b = {"score": 3.0, "comment": "a"}, {"score": 10.0, "comment": "b"}  # 11 → 10
+    a, b = {"score": 3.0, "comment": "a"}, {"score": 10.0, "comment": "b"}
     assert out["host"] == (a if host_is_a else b)
     assert out["guest"] == (b if host_is_a else a)

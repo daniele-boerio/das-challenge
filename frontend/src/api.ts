@@ -1,5 +1,5 @@
 // Tutte le chiamate al backend passano da qui.
-import type { AppConfig, Gallery, MatchState, PowerupKind, Settings } from "./types";
+import type { AppConfig, Gallery, MatchState, PowerupKind, Settings, User } from "./types";
 
 const store = {
   get(k: string): string | null {
@@ -18,15 +18,9 @@ const store = {
   },
 };
 
-export const tokens = {
-  get: (code: string) => store.get(`das:tok:${code.toUpperCase()}`),
-  set: (code: string, t: string) => store.set(`das:tok:${code.toUpperCase()}`, t),
-};
 export const prefs = {
   name: () => store.get("das:name") || "",
   setName: (n: string) => store.set("das:name", n),
-  access: () => store.get("das:access") || "",
-  setAccess: (c: string) => store.set("das:access", c),
   settings: (): Partial<Settings> | null => {
     try {
       return JSON.parse(store.get("das:settings") || "null");
@@ -45,14 +39,8 @@ export class ApiError extends Error {
   }
 }
 
-async function call<T>(path: string, opts: RequestInit & { code?: string } = {}): Promise<T> {
+async function call<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const headers = new Headers(opts.headers);
-  if (opts.code) {
-    const t = tokens.get(opts.code);
-    if (t) headers.set("X-Player-Token", t);
-  }
-  const access = prefs.access();
-  if (access) headers.set("X-Access-Code", access);
   if (opts.body && typeof opts.body === "string") headers.set("Content-Type", "application/json");
   let res: Response;
   try {
@@ -73,34 +61,31 @@ async function call<T>(path: string, opts: RequestInit & { code?: string } = {})
   return res.json() as Promise<T>;
 }
 
-const post = <T>(path: string, body: unknown, code?: string) =>
-  call<T>(path, { method: "POST", body: JSON.stringify(body ?? {}), code });
+const post = <T>(path: string, body?: unknown) =>
+  call<T>(path, { method: "POST", body: JSON.stringify(body ?? {}) });
 
 export const api = {
   config: () => call<AppConfig>("/api/config"),
-  checkAccess: () => post<{ ok: true }>("/api/access/check", {}),
-  create: (name: string, settings: Settings) =>
-    post<{ code: string; token: string; state: MatchState }>("/api/matches", { name, settings }),
-  state: (code: string) => call<MatchState>(`/api/matches/${code}`, { code }),
-  join: (code: string, name: string) =>
-    post<{ token: string; state: MatchState }>(`/api/matches/${code}/join`, { name }),
-  startRound: (code: string, difficulty: string) =>
-    post<MatchState>(`/api/matches/${code}/rounds`, { difficulty }, code),
-  powerup: (code: string, kind: PowerupKind) =>
-    post<MatchState>(`/api/matches/${code}/powerups`, { kind }, code),
+  me: () => call<{ user: User | null }>("/api/auth/me"),
+  requestCode: (email: string) => post<{ ok: true }>("/api/auth/request", { email }),
+  verify: (email: string, code: string) => post<{ user: User }>("/api/auth/verify", { email, code }),
+  setName: (name: string) => post<{ user: User }>("/api/auth/name", { name }),
+  logout: () => post<{ ok: true }>("/api/auth/logout"),
+  create: (settings: Settings) => post<{ code: string; state: MatchState }>("/api/matches", { settings }),
+  state: (code: string) => call<MatchState>(`/api/matches/${code}`),
+  join: (code: string) => post<{ state: MatchState }>(`/api/matches/${code}/join`),
+  startRound: (code: string, difficulty: string) => post<MatchState>(`/api/matches/${code}/rounds`, { difficulty }),
+  powerup: (code: string, kind: PowerupKind) => post<MatchState>(`/api/matches/${code}/powerups`, { kind }),
   vote: (code: string, n: number, value: number) =>
-    post<MatchState>(`/api/matches/${code}/rounds/${n}/vote`, { value }, code),
-  finish: (code: string) => post<MatchState>(`/api/matches/${code}/finish`, {}, code),
-  rematch: (code: string) =>
-    post<{ code: string; token: string; state: MatchState }>(`/api/matches/${code}/rematch`, {}, code),
+    post<MatchState>(`/api/matches/${code}/rounds/${n}/vote`, { value }),
+  finish: (code: string) => post<MatchState>(`/api/matches/${code}/finish`),
+  rematch: (code: string) => post<{ code: string; state: MatchState }>(`/api/matches/${code}/rematch`),
   gallery: () => call<Gallery>("/api/gallery"),
   upload: (code: string, n: number, file: Blob, onProgress?: (p: number) => void) =>
     new Promise<MatchState>((resolve, reject) => {
       // XHR e non fetch: serve l'avanzamento, le foto dal telefono pesano.
       const xhr = new XMLHttpRequest();
       xhr.open("POST", `/api/matches/${code}/rounds/${n}/photo`);
-      const t = tokens.get(code);
-      if (t) xhr.setRequestHeader("X-Player-Token", t);
       xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
       xhr.onload = () => {
         let body: any = null;
@@ -120,7 +105,7 @@ export const api = {
 };
 
 export function wsUrl(code: string) {
+  // Il cookie di sessione parte da solo: stessa origine.
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  const t = tokens.get(code);
-  return `${proto}://${location.host}/api/ws/${code}${t ? `?token=${encodeURIComponent(t)}` : ""}`;
+  return `${proto}://${location.host}/api/ws/${code}`;
 }

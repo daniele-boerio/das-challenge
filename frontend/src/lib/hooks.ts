@@ -55,8 +55,8 @@ export function useMatch(code: string) {
         setConnected(false);
         window.clearInterval(ping);
         if (closed) return;
-        if (ev.code === 4404) {
-          setError("Partita non trovata");
+        if (ev.code === 4404 || ev.code === 4403) {
+          setError(ev.code === 4404 ? "Partita non trovata" : "Questa partita non è tua: la vedono solo i due giocatori");
           return;
         }
         retry = Math.min(retry + 1, 6);

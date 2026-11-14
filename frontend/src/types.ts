@@ -83,7 +83,6 @@ export interface MatchState {
 }
 
 export interface AppConfig {
-  access_required: boolean;
   ai_available: boolean;
   themes: Record<string, string>;
   default_minutes: Record<Difficulty, number>;
@@ -109,4 +108,10 @@ export interface GalleryMatch {
 export interface Gallery {
   matches: GalleryMatch[];
   head_to_head: { players: string[]; wins: Record<string, number>; draws: number; matches: number }[];
+}
+
+export interface User {
+  id: number;
+  email: string;
+  name: string | null;
 }

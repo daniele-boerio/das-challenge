@@ -30,8 +30,9 @@ SessionLocal = sessionmaker(expire_on_commit=False)
 
 
 def init(url: str | None = None):
-    """Crea engine e tabelle. Lo schema è piccolo e per ora `create_all` basta:
-    il giorno che una colonna cambia, si passa ad Alembic."""
+    """Crea engine e tabelle. Lo schema è piccolo: `create_all` per le tabelle e
+    `_add_columns` per le colonne nuove di tabelle già esistenti. Il giorno che una
+    colonna esistente cambia tipo, si passa ad Alembic."""
     global engine
     url = url or config.DATABASE_URL
     if url.startswith("sqlite:///") and ":memory:" not in url:
@@ -41,7 +42,25 @@ def init(url: str | None = None):
     from . import models  # noqa: F401
 
     Base.metadata.create_all(engine)
+    _add_columns(engine)
     return engine
+
+
+# Colonne aggiunte dopo il primo rilascio: (tabella, colonna, DDL).
+_NEW_COLUMNS = [
+    ("matches", "host_user_id", "INTEGER REFERENCES users(id)"),
+    ("matches", "guest_user_id", "INTEGER REFERENCES users(id)"),
+]
+
+
+def _add_columns(eng):
+    from sqlalchemy import inspect, text
+
+    insp = inspect(eng)
+    with eng.begin() as conn:
+        for table, col, ddl in _NEW_COLUMNS:
+            if table in insp.get_table_names() and col not in {c["name"] for c in insp.get_columns(table)}:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
 
 
 @contextmanager

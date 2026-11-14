@@ -118,13 +118,15 @@ def _new_code(db: Session) -> str:
     return "".join(secrets.choice(alphabet + string.digits) for _ in range(6))
 
 
-def create_match(db: Session, host_name: str, settings: dict | None) -> Match:
+def create_match(db: Session, host, settings: dict | None) -> Match:
+    """`host` è lo User che crea la partita."""
     m = Match(
         code=_new_code(db),
         created_at=now(),
         status="lobby",
         settings=clean_settings(settings),
-        host_name=clean_name(host_name),
+        host_user_id=host.id,
+        host_name=clean_name(host.name),
         host_token=secrets.token_urlsafe(24),
         powerups={r: {p: True for p in POWERUPS} for r in ROLES},
     )
@@ -140,34 +142,47 @@ def get_match(db: Session, code: str) -> Match:
     return m
 
 
-def role_of(m: Match, token: str | None) -> str | None:
-    if not token:
+def role_of(m: Match, user_id: int | None) -> str | None:
+    if user_id is None:
         return None
-    if secrets.compare_digest(token, m.host_token):
+    if m.host_user_id == user_id:
         return "host"
-    if m.guest_token and secrets.compare_digest(token, m.guest_token):
+    if m.guest_user_id is not None and m.guest_user_id == user_id:
         return "guest"
     return None
 
 
-def require_role(m: Match, token: str | None) -> str:
-    role = role_of(m, token)
+def require_role(m: Match, user_id: int | None) -> str:
+    role = role_of(m, user_id)
     if not role:
         raise GameError("Non fai parte di questa partita", 403)
     return role
 
 
-def join(db: Session, m: Match, name: str) -> str:
-    if m.guest_token:
+def has_guest(m: Match) -> bool:
+    return m.guest_user_id is not None
+
+
+def check_can_view(m: Match, role: str | None):
+    """La partita la vedono solo i due giocatori. Gli altri la vedono solo finché
+    il posto dell'avversario è libero, per poterci entrare dal link."""
+    if role is None and has_guest(m):
+        raise GameError("Questa partita non è tua: la vedono solo i due giocatori", 403)
+
+
+def join(db: Session, m: Match, user) -> None:
+    if m.host_user_id == user.id:
+        raise GameError("Non puoi sfidare te stesso: manda il link all'avversario")
+    if has_guest(m):
         raise GameError("La partita ha già due giocatori", 409)
-    name = clean_name(name)
+    name = clean_name(user.name)
     if name.casefold() == m.host_name.casefold():
         name = f"{name} (2)"
+    m.guest_user_id = user.id
     m.guest_name = name
     m.guest_token = secrets.token_urlsafe(24)
     if m.status == "lobby":
         m.status = "ready"
-    return m.guest_token
 
 
 def name_of(m: Match, role: str) -> str:
@@ -211,7 +226,7 @@ def suggested_difficulty(m: Match) -> str:
 def check_can_start(m: Match, role: str):
     if role != "host":
         raise GameError("Il round lo fa partire chi ha creato la partita", 403)
-    if not m.guest_token:
+    if not has_guest(m):
         raise GameError("Aspetta che l'avversario entri")
     if m.status == "finished":
         raise GameError("La partita è finita")
@@ -542,7 +557,7 @@ def view(m: Match, role: str | None, online: set[str] | None = None) -> dict:
     t = totals(m)
     players = {}
     for who in ROLES:
-        if who == "guest" and not m.guest_token:
+        if who == "guest" and not has_guest(m):
             players[who] = None
             continue
         players[who] = {

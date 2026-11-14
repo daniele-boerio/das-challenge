@@ -1198,6 +1198,12 @@ select:focus {
 }
 
 /* galleria */
+.gal-note {
+  margin: -6px 0 14px;
+  color: #d8ccff;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
 .h2h {
   display: flex;
   align-items: center;
@@ -1340,4 +1346,33 @@ select:focus {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* accesso */
+.otp {
+  font-size: 2rem;
+  letter-spacing: 12px;
+  margin-bottom: 8px;
+}
+.link-btn.back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 0;
+}
+.whoami {
+  text-align: center;
+  color: #b9acdf;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.link-inline {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--yellow);
+  text-decoration: underline;
+  cursor: pointer;
 }

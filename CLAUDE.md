@@ -14,7 +14,9 @@ foto delle creazioni, voto reciproco o giudice AI (OpenRouter). Vedi README.md.
 - `backend/app/references.py` — Openverse → Wikimedia Commons, foto salvata in locale con attribuzione.
 - `backend/app/judge.py` — giudice AI via OpenRouter (`/chat/completions`, JSON schema).
 - `frontend/src/pages/Match.tsx` — tutta la partita (lobby, round, giudizio, risultato, finale).
-- `frontend/src/api.ts` — tutte le chiamate; token del giocatore per partita in localStorage.
+- `backend/app/auth.py` — accesso con mail + codice OTP, sessione senza scadenza in cookie httpOnly.
+- `frontend/src/api.ts` — tutte le chiamate (il cookie di sessione parte da solo, anche sul WebSocket).
+- `frontend/src/pages/Login.tsx` — mail → codice → nome; l'app intera sta dietro questo cancello.
 - `frontend/src/index.css` — un solo foglio, variabili in `:root`.
 
 ## Regole da non rompere
@@ -25,8 +27,12 @@ foto delle creazioni, voto reciproco o giudice AI (OpenRouter). Vedi README.md.
   il risultato dell'AI si mostra solo a round chiuso, per non influenzare il voto.
 - Se il giudice AI fallisce o resta appeso, il round passa al voto (`ai_failed`, `heal`):
   la partita non deve mai bloccarsi.
-- Nessun segreto nel repo: `OPENROUTER_API_KEY` e `ACCESS_CODE` solo nelle variabili di Coolify.
-- Lo schema DB è creato con `create_all`: se una colonna esistente cambia, introdurre Alembic.
+- Chi gioca è l'account (`host_user_id`/`guest_user_id`). Una partita la vedono solo i due
+  giocatori (`check_can_view`); gli altri solo finché il posto dell'avversario è libero.
+  La galleria mostra solo le partite dell'utente collegato.
+- Nessun segreto nel repo: `OPENROUTER_API_KEY` e le `SMTP_*` solo nelle variabili di Coolify.
+- Lo schema DB è creato con `create_all`; le colonne nuove di tabelle esistenti vanno in
+  `db._NEW_COLUMNS`. Se una colonna esistente cambia, introdurre Alembic.
 
 ## Comandi
 

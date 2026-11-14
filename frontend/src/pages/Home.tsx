@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Brain, Dices, Images, Shuffle, Sparkles, Swords, Users, Zap } from "lucide-react";
-import { api, prefs, tokens } from "../api";
+import { api, prefs } from "../api";
 import { useApp } from "../App";
 import type { Difficulty, JudgeMode, Settings } from "../types";
 import { DIFF_LABEL } from "../lib/util";
@@ -13,11 +13,9 @@ const JUDGES: { id: JudgeMode; label: string; hint: string }[] = [
 ];
 
 export default function Home() {
-  const { config, toast } = useApp();
+  const { config, toast, user, setUser } = useApp();
   const nav = useNavigate();
-  const [name, setName] = useState(prefs.name());
   const [joinCode, setJoinCode] = useState("");
-  const [access, setAccess] = useState(prefs.access());
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -29,15 +27,11 @@ export default function Home() {
 
   async function create() {
     if (!s) return;
-    if (!name.trim()) return toast("Scrivi il tuo nome", "error");
     setBusy(true);
     try {
-      prefs.setName(name.trim());
-      if (config?.access_required) prefs.setAccess(access.trim());
       const settingsToSend = { ...s, judge: aiOk ? s.judge : "voto" } as Settings;
       prefs.setSettings(settingsToSend);
-      const r = await api.create(name.trim(), settingsToSend);
-      tokens.set(r.code, r.token);
+      const r = await api.create(settingsToSend);
       nav(`/p/${r.code}`);
     } catch (e: any) {
       toast(e.message, "error");
@@ -61,24 +55,15 @@ export default function Home() {
         <h1 className="title">
           Sfida <span className="accent">DAS</span>
         </h1>
-        <p className="subtitle">Una reference, un timer, due scultori. Chi ci va più vicino?</p>
+        <p className="subtitle">
+          Ciao <b className="accent">{user?.name}</b>! Una reference, un timer, due scultori.
+        </p>
       </header>
 
       <section className="card pop">
         <h2 className="card-title">
           <Swords size={22} /> Nuova sfida
         </h2>
-        <label className="field">
-          <span>Il tuo nome</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Es. Daniele" maxLength={40} />
-        </label>
-        {config?.access_required && (
-          <label className="field">
-            <span>Codice di accesso</span>
-            <input value={access} onChange={(e) => setAccess(e.target.value)} placeholder="Chiedilo a chi ha installato l'app" />
-          </label>
-        )}
-
         {s && (
           <>
             <div className="field">
@@ -200,9 +185,37 @@ export default function Home() {
         <Images size={26} />
         <div>
           <b>Galleria e storico</b>
-          <small>Tutte le sfide passate e chi è in vantaggio</small>
+          <small>Le tue sfide passate e chi è in vantaggio</small>
         </div>
       </Link>
+
+      <p className="whoami">
+        Sei dentro come {user?.email} ·{" "}
+        <button
+          className="link-inline"
+          onClick={async () => {
+            const n = window.prompt("Il tuo nuovo nome", user?.name || "");
+            if (!n?.trim()) return;
+            try {
+              setUser((await api.setName(n.trim())).user);
+            } catch (e: any) {
+              toast(e.message, "error");
+            }
+          }}
+        >
+          cambia nome
+        </button>{" "}
+        ·{" "}
+        <button
+          className="link-inline"
+          onClick={async () => {
+            await api.logout().catch(() => {});
+            setUser(null);
+          }}
+        >
+          esci
+        </button>
+      </p>
     </div>
   );
 }

@@ -7,6 +7,42 @@ from .db import Base
 # scarto dall'orologio del server, e i confronti restano banali.
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
+    name: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[float] = mapped_column(Float)
+
+
+class LoginCode(Base):
+    """Il codice a 6 cifre mandato per mail. Si salva solo l'hash."""
+
+    __tablename__ = "login_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(254), index=True)
+    code_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[float] = mapped_column(Float)
+    expires_at: Mapped[float] = mapped_column(Float)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    used: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class Session(Base):
+    """Una sessione per dispositivo, senza scadenza: è un gioco, si resta dentro.
+    Nel cookie c'è il token, qui solo il suo hash."""
+
+    __tablename__ = "sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[float] = mapped_column(Float)
+    last_seen_at: Mapped[float] = mapped_column(Float)
+
+
 class Match(Base):
     __tablename__ = "matches"
 
@@ -18,9 +54,13 @@ class Match(Base):
     status: Mapped[str] = mapped_column(String(16), default="lobby")
     settings: Mapped[dict] = mapped_column(JSON)
 
+    # Chi gioca è l'account; il nome è quello che aveva quando è entrato.
+    host_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    guest_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     host_name: Mapped[str] = mapped_column(String(40))
-    host_token: Mapped[str] = mapped_column(String(64))
     guest_name: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # Della prima versione, senza account: non si usano più, restano per lo schema.
+    host_token: Mapped[str] = mapped_column(String(64))
     guest_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # {"host": {"extra": true, "sabotage": true, "reroll": true}, "guest": {...}}

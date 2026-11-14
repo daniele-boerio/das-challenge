@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import confetti from "canvas-confetti";
 import {
@@ -18,7 +18,7 @@ import {
   Sparkles,
   Upload,
 } from "lucide-react";
-import { api, prefs, tokens } from "../api";
+import { api } from "../api";
 import { useApp } from "../App";
 import { Credit, DiffBadge, LoadError, Ring, Scoreboard, Zoomable } from "../components/bits";
 import { useMatch, useServerNow, useWakeLock } from "../lib/hooks";
@@ -67,7 +67,7 @@ export default function MatchPage() {
           state={state}
           onJoined={(s) => {
             setState(s);
-            relink();
+            relink(); // il WebSocket era aperto da «ospite»: lo riapro da giocatore
           }}
         />
       ) : state.status === "lobby" ? (
@@ -89,15 +89,11 @@ export default function MatchPage() {
 
 function JoinForm({ code, state, onJoined }: { code: string; state: MatchState; onJoined: Setter }) {
   const { toast } = useApp();
-  const [name, setName] = useState(prefs.name());
   const [busy, setBusy] = useState(false);
   async function go() {
-    if (!name.trim()) return toast("Scrivi il tuo nome", "error");
     setBusy(true);
     try {
-      prefs.setName(name.trim());
-      const r = await api.join(code, name.trim());
-      tokens.set(code, r.token);
+      const r = await api.join(code);
       onJoined(r.state);
       buzz(60);
     } catch (e: any) {
@@ -116,10 +112,6 @@ function JoinForm({ code, state, onJoined }: { code: string; state: MatchState; 
         {state.settings.rounds} round · tema {state.settings.theme} ·{" "}
         {state.settings.judge === "voto" ? "voto reciproco" : state.settings.judge === "ai" ? "giudice AI" : "voto + AI"}
       </p>
-      <label className="field">
-        <span>Il tuo nome</span>
-        <input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} onKeyDown={(e) => e.key === "Enter" && go()} autoFocus />
-      </label>
       <button className="btn btn-big btn-pink" disabled={busy} onClick={go}>
         {busy ? "Entro…" : "Accetto la sfida"}
       </button>
@@ -684,20 +676,16 @@ function Final({ state }: { state: MatchState }) {
     window.setTimeout(() => confetti({ particleCount: 120, angle: 120, spread: 70, origin: { x: 1 }, colors }), 700);
   }, [fresh, w]);
 
-  const rematchMine = useMemo(() => (state.rematch_code ? !!tokens.get(state.rematch_code) : false), [state.rematch_code]);
-
   async function rematch() {
     setBusy(true);
     try {
       if (state.rematch_code) {
-        if (!rematchMine) {
-          const r = await api.join(state.rematch_code, state.you ? state.players[state.you]!.name : prefs.name() || "Sfidante");
-          tokens.set(state.rematch_code, r.token);
-        }
+        // Se la rivincita l'ha creata l'altro ci entro; se è mia, il server dice
+        // di no e vado comunque alla pagina.
+        await api.join(state.rematch_code).catch(() => {});
         nav(`/p/${state.rematch_code}`);
       } else {
         const r = await api.rematch(state.code);
-        tokens.set(r.code, r.token);
         nav(`/p/${r.code}`);
       }
     } catch (e: any) {
@@ -726,7 +714,7 @@ function Final({ state }: { state: MatchState }) {
         {state.you && (
           <button className="btn btn-big btn-yellow" disabled={busy} onClick={rematch}>
             <RotateCcw size={20} />
-            {state.rematch_code ? (rematchMine ? "Vai alla rivincita" : "Entra nella rivincita!") : "Rivincita"}
+            {state.rematch_code ? "Entra nella rivincita!" : "Rivincita"}
           </button>
         )}
         <Link to="/galleria" className="link-btn">
