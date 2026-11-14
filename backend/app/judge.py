@@ -45,8 +45,9 @@ avvicina al soggetto della reference.
 
 Come giudicare:
 - Conta la forma: silhouette, proporzioni, posa, volumi e i dettagli riconoscibili.
-- Il DAS di solito è bianco o grigio e non è dipinto: ignora il colore, a meno che la \
-creazione sia stata dipinta, e in quel caso un colore giusto è un piccolo bonus.
+- I giocatori hanno solo DAS bianco e nessun colore: le creazioni sono tutte bianche o \
+grigie. Ignora del tutto il colore, anche se la reference è colorata: non togliere punti \
+perché manca e non darne per una sfumatura. Conta solo la forma.
 - Ignora sfondo, luce e qualità della foto. Se una foto non mostra una scultura, dalle 0 \
 e dillo.
 - Tieni conto della difficoltà: su un soggetto difficile anche un risultato approssimativo \

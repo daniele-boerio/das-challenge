@@ -43,7 +43,8 @@ CLAY_WORDS = re.compile(
 
 
 def queries(subject: str) -> list[str]:
-    return [f"polymer clay {subject}", f"clay {subject}", f"plasticine {subject}", f"{subject} clay sculpture"]
+    # Prima le sculture bianche, come quelle che si possono fare col DAS bianco senza colori.
+    return [f"white clay {subject}", f"polymer clay {subject}", f"clay {subject}", f"{subject} clay sculpture"]
 
 
 def is_clay(text: str) -> bool:
@@ -169,7 +170,10 @@ PICK_SYSTEM = """Scegli la foto di riferimento per una sfida di scultura con il 
 foto di una SCULTURA FATTA A MANO in pasta da modellare (DAS, pongo, polymer clay, \
 plastilina, fimo, ceramica fatta a mano) che rappresenta il soggetto indicato: un \
 oggetto singolo, ben visibile, che due persone possano provare a rifare in un tempo \
-limitato. Scarta: il soggetto vero (animali, cibo, oggetti reali), disegni, tutorial \
+limitato. I giocatori hanno solo DAS bianco e nessun colore: preferisci sculture \
+bianche, grigie o di un solo colore, e quelle che si riconoscono dalla forma; scarta quelle \
+che senza i colori non si capirebbero più (dettagli solo dipinti, motivi colorati, \
+tanti pezzi di colori diversi). Scarta anche: il soggetto vero (animali, cibo, oggetti reali), disegni, tutorial \
 con tante foto, collage, gioielli minuscoli, foto sfocate o dove la scultura è piccola.
 Rispondi solo con il JSON richiesto: `best` è il numero della foto migliore, oppure \
 null se nessuna va bene."""
