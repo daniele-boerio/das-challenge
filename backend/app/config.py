@@ -34,7 +34,7 @@ REFERENCE_AI = os.getenv("REFERENCE_AI", "true").lower() in ("1", "true", "yes")
 REFERENCE_MODEL = os.getenv("REFERENCE_MODEL", "")  # vuoto = AI_MODEL
 # Reference generate da un modello di immagini (prima scelta); la ricerca resta di riserva.
 IMAGE_AI = os.getenv("IMAGE_AI", "true").lower() in ("1", "true", "yes")
-IMAGE_MODEL = os.getenv("IMAGE_MODEL", "black-forest-labs/flux.2-klein-4b")
+IMAGE_MODEL = os.getenv("IMAGE_MODEL", "openai/gpt-image-2")
 IMAGE_TIMEOUT_S = float(os.getenv("IMAGE_TIMEOUT_S", "60"))
 USER_AGENT = os.getenv("USER_AGENT", "das-challenge/1.0 (self-hosted game)")
 

@@ -3,7 +3,7 @@
 Cercarla su Openverse e Commons a volte non trovava nessuna scultura, e il round
 partiva col solo nome del soggetto. Generata, la foto c'è sempre, è sempre una
 scultura in pasta da modellare (mai il soggetto vero), rispetta il DAS bianco e la
-difficoltà, e arriva in pochi secondi. Costa circa un centesimo e mezzo a foto
+difficoltà, e arriva in pochi secondi. Costa circa mezzo centesimo a foto
 con il modello di default (`IMAGE_MODEL`); se la generazione fallisce si torna
 alla ricerca.
 """
@@ -20,9 +20,9 @@ log = logging.getLogger(__name__)
 
 # In ordine di preferenza, se `IMAGE_MODEL` non è nel listino: economici e buoni sulle foto.
 PREFERRED = (
+    "openai/gpt-image-2",
     "black-forest-labs/flux.2-klein-4b",
     "google/gemini-3.1-flash-lite-image",
-    "openai/gpt-image-2",
     "black-forest-labs/flux.2-pro",
     "google/gemini-3.1-flash-image",
 )

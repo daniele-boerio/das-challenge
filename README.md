@@ -51,8 +51,8 @@ Il catalogo dei soggetti (`backend/app/subjects.py`) è scelto a mano perché si
 
 Con la chiave OpenRouter la foto si **genera** (`backend/app/imagegen.py`): una scultura fatta a
 mano del soggetto, in DAS bianco o in paste colorate secondo l'impostazione, più semplice o più
-dettagliata secondo la difficoltà. Costa circa 1,5 centesimi a foto col modello di default
-(`IMAGE_MODEL`, di default `black-forest-labs/flux.2-klein-4b`; se non è nel listino si prende un
+dettagliata secondo la difficoltà. Costa circa mezzo centesimo a foto col modello di default
+(`IMAGE_MODEL`, di default `openai/gpt-image-2`; se non è nel listino si prende un
 altro modello di immagini economico). `IMAGE_AI=false` la spegne.
 
 Se la generazione fallisce, si cerca «polymer clay …», «clay …», «plasticine …» su
