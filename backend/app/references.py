@@ -23,7 +23,7 @@ import re
 
 import httpx
 
-from . import config, media
+from . import ai_models, config, media
 
 log = logging.getLogger(__name__)
 
@@ -215,7 +215,7 @@ def _ai_pick(c: httpx.Client, subject_it: str, subject_en: str, cands: list[dict
         timeout=config.AI_TIMEOUT_S,
         headers={"Authorization": f"Bearer {config.OPENROUTER_API_KEY}", "X-Title": "DAS Challenge"},
         json={
-            "model": config.REFERENCE_MODEL or config.AI_MODEL,
+            "model": ai_models.resolve(config.REFERENCE_MODEL or config.AI_MODEL),
             "max_tokens": 400,
             "messages": [{"role": "system", "content": PICK_SYSTEM}, {"role": "user", "content": content}],
             "response_format": {

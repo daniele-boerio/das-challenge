@@ -12,7 +12,7 @@ import re
 
 import httpx
 
-from . import config, media
+from . import ai_models, config, media
 
 SCHEMA = {
     "type": "object",
@@ -121,7 +121,7 @@ def judge(
             "X-Title": "DAS Challenge",
         },
         json={
-            "model": config.AI_MODEL,
+            "model": ai_models.resolve(),
             "max_tokens": 1000 + 400 * len(entries),
             "messages": [
                 {"role": "system", "content": SYSTEM},
@@ -138,6 +138,8 @@ def judge(
             msg = r.json().get("error", {}).get("message") or r.text
         except Exception:
             msg = r.text
+        if "model" in msg.lower():
+            ai_models.forget()
         raise RuntimeError(f"OpenRouter {r.status_code}: {msg[:300]}")
     body = r.json()
     choice = (body.get("choices") or [{}])[0]

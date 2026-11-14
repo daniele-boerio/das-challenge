@@ -97,3 +97,18 @@ def test_ai_failure_falls_back_to_clay_results(net, monkeypatch):
     monkeypatch.setattr(httpx, "post", boom)
     name, attr = references.fetch("owl", subject="Gufo")
     assert name and net[-1] in ("https://img/clay-owl.jpg", "https://img/fimo-owl.jpg")
+
+
+def test_model_slug_is_fixed_against_the_catalog():
+    from app import ai_models
+
+    models = [
+        {"id": "anthropic/claude-opus-4.8", "created": 10, "architecture": {"input_modalities": ["text", "image"]}},
+        {"id": "anthropic/claude-opus-5", "created": 20, "architecture": {"input_modalities": ["text", "image"]}},
+        {"id": "anthropic/claude-haiku-5", "created": 30, "architecture": {"input_modalities": ["text"]}},
+    ]
+    assert ai_models.pick("anthropic/claude-opus-5", models) == "anthropic/claude-opus-5"
+    assert ai_models.pick("claude-opus-4-8", models) == "anthropic/claude-opus-4.8"
+    assert ai_models.pick("anthropic/claude-opus-4-8", models) == "anthropic/claude-opus-4.8"
+    assert ai_models.pick("anthropic/claude-opus-9", models) == "anthropic/claude-opus-5"
+    assert ai_models.pick("x/y", []) == "x/y"

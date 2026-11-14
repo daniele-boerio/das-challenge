@@ -88,3 +88,12 @@ def clock(monkeypatch):
     c = Clock()
     monkeypatch.setattr(game, "now", lambda: c.t)
     return c
+
+
+@pytest.fixture(autouse=True)
+def no_model_catalog(monkeypatch):
+    """Il listino di OpenRouter non si scarica nei test: lo slug resta quello chiesto."""
+    from app import ai_models
+
+    monkeypatch.setattr(ai_models, "_catalog", lambda: [])
+    ai_models.forget()
