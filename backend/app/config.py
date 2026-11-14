@@ -29,6 +29,9 @@ AI_TIMEOUT_S = float(os.getenv("AI_TIMEOUT_S", "120"))
 
 # Reference: Openverse (Creative Commons) e, se non trova niente, Wikimedia Commons.
 REFERENCE_TIMEOUT_S = float(os.getenv("REFERENCE_TIMEOUT_S", "12"))
+# Con la chiave OpenRouter, un modello guarda le miniature e sceglie la scultura migliore.
+REFERENCE_AI = os.getenv("REFERENCE_AI", "true").lower() in ("1", "true", "yes")
+REFERENCE_MODEL = os.getenv("REFERENCE_MODEL", "")  # vuoto = AI_MODEL
 USER_AGENT = os.getenv("USER_AGENT", "das-challenge/1.0 (self-hosted game)")
 
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "25"))

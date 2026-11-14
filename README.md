@@ -45,10 +45,17 @@ più punti.
 
 ## Da dove vengono le reference
 
+La reference non è il soggetto vero ma **una scultura in pasta da modellare** di quel soggetto
+(DAS, pongo, polymer clay, plastilina, fimo): è quella che ha senso provare a rifare.
 Il catalogo dei soggetti (`backend/app/subjects.py`) è scelto a mano perché sia fattibile col DAS.
-Per ogni soggetto la foto si cerca su [Openverse](https://openverse.org) (immagini Creative Commons)
-e, se non trova niente, su [Wikimedia Commons](https://commons.wikimedia.org). La foto si salva in
-locale con la sua attribuzione, che compare sotto l'immagine come chiede la licenza.
+Per ogni soggetto si cerca «polymer clay …», «clay …», «plasticine …» su
+[Openverse](https://openverse.org) (immagini Creative Commons) e poi su
+[Wikimedia Commons](https://commons.wikimedia.org), e si tengono solo i risultati che nel titolo,
+nei tag o nelle categorie dicono di essere di pasta da modellare. Se c'è la chiave OpenRouter, un
+modello guarda le miniature e sceglie quella che è davvero una scultura del soggetto, singola e ben
+visibile (`REFERENCE_AI=false` per spegnerlo, `REFERENCE_MODEL` per usare un modello diverso dal
+giudice). Se non si trova nessuna scultura il round parte col solo nome del soggetto.
+La foto si salva in locale con la sua attribuzione, che compare sotto l'immagine come chiede la licenza.
 
 ## Stack
 
@@ -74,6 +81,7 @@ cd frontend && npm install && npm run dev   # http://localhost:3000
 | --- | --- |
 | `OPENROUTER_API_KEY` | Accende il giudice AI. Senza, si gioca solo col voto reciproco. |
 | `AI_MODEL` | Slug OpenRouter del modello (default `anthropic/claude-opus-4-8`). |
+| `REFERENCE_AI`, `REFERENCE_MODEL` | Il modello che sceglie la scultura fra le miniature (acceso di default se c'è la chiave; modello vuoto = `AI_MODEL`). |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | Spedizione dei codici di accesso (Gmail: `smtp.gmail.com`, 587, la tua mail, una password per le app). Senza `SMTP_HOST` il codice compare nei log del backend. |
 | `ALLOWED_EMAILS` | Facoltativo: elenco di mail separate da virgola che possono entrare. Vuoto = chiunque. |
 | `COOKIE_SECURE` | `true` in produzione (default nel compose), `false` in locale su http. |

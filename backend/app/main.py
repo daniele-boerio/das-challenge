@@ -266,7 +266,7 @@ def join(code: str, uid: int = Depends(me)):
 
 
 def _fetch_reference(subject: tuple):
-    return references.fetch(subject[1])
+    return references.fetch(subject[1], subject=subject[0])
 
 
 @app.post("/api/matches/{code}/rounds")

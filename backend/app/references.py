@@ -1,11 +1,22 @@
-"""Trovare la foto di riferimento di un soggetto.
+"""Trovare la foto di riferimento di un soggetto: una scultura in pasta da modellare.
+
+La reference non è il soggetto vero (un fungo nel bosco) ma una creazione fatta a
+mano con DAS, pongo, polymer clay o plastilina: è quella che si può rifare al tavolo.
 
 Prima Openverse (immagini Creative Commons, API pubblica senza chiave), poi
-Wikimedia Commons. La foto si scarica e si salva in locale: così entrambi vedono
-la stessa immagine, la galleria non dipende da link esterni che spariscono, e
-l'attribuzione richiesta dalla licenza resta accanto all'immagine.
+Wikimedia Commons, con più ricerche («polymer clay owl», «clay owl»…). Si tengono
+solo i risultati che nel titolo, nei tag o nelle categorie dicono di essere di
+pasta da modellare; se c'è la chiave OpenRouter, un modello guarda le miniature e
+sceglie quella che è davvero una scultura del soggetto, fatta bene e ben visibile.
+
+La foto si scarica e si salva in locale: così tutti vedono la stessa immagine, la
+galleria non dipende da link esterni che spariscono, e l'attribuzione richiesta
+dalla licenza resta accanto all'immagine.
 """
 
+import base64
+import io
+import json
 import logging
 import random
 import re
@@ -19,6 +30,23 @@ log = logging.getLogger(__name__)
 OPENVERSE = "https://api.openverse.org/v1/images/"
 COMMONS = "https://commons.wikimedia.org/w/api.php"
 MAX_BYTES = 12 * 1024 * 1024
+WANTED = 8          # candidati buoni dopo cui si smette di cercare
+AI_CANDIDATES = 8   # miniature mandate al modello
+
+# Le parole che dicono «è fatto di pasta da modellare».
+CLAY_WORDS = re.compile(
+    r"\b(clay|polymer|fimo|sculpey|plasticine|plastilina|plastilin|play-?doh|playdough|"
+    r"pongo|modell?ing (?:clay|paste)|air[- ]dry|cold porcelain|fondant|sugarpaste|gum ?paste)\b",
+    re.I,
+)
+
+
+def queries(subject: str) -> list[str]:
+    return [f"polymer clay {subject}", f"clay {subject}", f"plasticine {subject}", f"{subject} clay sculpture"]
+
+
+def is_clay(text: str) -> bool:
+    return bool(CLAY_WORDS.search(text or ""))
 
 
 def _client() -> httpx.Client:
@@ -38,9 +66,12 @@ def _openverse(c: httpx.Client, query: str) -> list[dict]:
             continue
         lic = (it.get("license") or "").upper()
         ver = it.get("license_version") or ""
+        tags = " ".join(t.get("name", "") for t in it.get("tags") or [] if isinstance(t, dict))
         out.append(
             {
                 "image": it["url"],
+                "thumb": it.get("thumbnail") or it["url"],
+                "text": f"{it.get('title') or ''} {tags}",
                 "title": it.get("title") or "",
                 "creator": it.get("creator") or "",
                 "license": f"CC {lic} {ver}".strip() if lic not in ("PDM", "CC0") else lic,
@@ -79,10 +110,15 @@ def _commons(c: httpx.Client, query: str) -> list[dict]:
         img = info.get("thumburl") or info.get("url")
         if not img:
             continue
+        title = page.get("title", "").removeprefix("File:")
+        desc = _strip_html(meta.get("ImageDescription", {}).get("value", ""))
+        cats = meta.get("Categories", {}).get("value", "")
         out.append(
             {
                 "image": img,
-                "title": page.get("title", "").removeprefix("File:"),
+                "thumb": img,
+                "text": f"{title} {desc} {cats}",
+                "title": title,
                 "creator": _strip_html(meta.get("Artist", {}).get("value", "")),
                 "license": meta.get("LicenseShortName", {}).get("value", ""),
                 "license_url": meta.get("LicenseUrl", {}).get("value", ""),
@@ -104,25 +140,125 @@ def _download(c: httpx.Client, url: str) -> bytes:
         return bytes(buf)
 
 
-def fetch(query: str, rng: random.Random | None = None) -> tuple[str | None, dict | None]:
+def candidates(c: httpx.Client, subject: str) -> list[dict]:
+    """I risultati che si dichiarano di pasta da modellare, senza doppioni."""
+    found: list[dict] = []
+    seen: set[str] = set()
+    for source in (_openverse, _commons):
+        for q in queries(subject):
+            try:
+                results = source(c, q)
+            except Exception as exc:
+                log.warning("ricerca reference %s «%s» fallita: %s", source.__name__, q, exc)
+                break  # la fonte non risponde: inutile insistere con le altre ricerche
+            for cand in results:
+                if cand["image"] in seen or not is_clay(cand["text"]):
+                    continue
+                seen.add(cand["image"])
+                found.append(cand)
+            if len(found) >= WANTED:
+                return found
+    return found
+
+
+# ── la scelta del modello ─────────────────────────────────────────────────────
+
+PICK_SYSTEM = """Scegli la foto di riferimento per una sfida di scultura con il DAS \
+(pasta da modellare che si asciuga all'aria). Ti mostro delle foto numerate. Serve una \
+foto di una SCULTURA FATTA A MANO in pasta da modellare (DAS, pongo, polymer clay, \
+plastilina, fimo, ceramica fatta a mano) che rappresenta il soggetto indicato: un \
+oggetto singolo, ben visibile, che due persone possano provare a rifare in un tempo \
+limitato. Scarta: il soggetto vero (animali, cibo, oggetti reali), disegni, tutorial \
+con tante foto, collage, gioielli minuscoli, foto sfocate o dove la scultura è piccola.
+Rispondi solo con il JSON richiesto: `best` è il numero della foto migliore, oppure \
+null se nessuna va bene."""
+
+PICK_SCHEMA = {
+    "type": "object",
+    "properties": {"best": {"type": ["integer", "null"]}, "reason": {"type": "string"}},
+    "required": ["best", "reason"],
+    "additionalProperties": False,
+}
+
+
+def _small_jpeg(data: bytes, side: int = 512) -> bytes:
+    from PIL import Image
+
+    im = Image.open(io.BytesIO(data)).convert("RGB")
+    im.thumbnail((side, side))
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=80)
+    return buf.getvalue()
+
+
+def _ai_pick(c: httpx.Client, subject_it: str, subject_en: str, cands: list[dict]) -> dict | None:
+    """Il candidato scelto dal modello; None se nessuno va bene. Solleva se la
+    chiamata fallisce (chi chiama ripiega sulla scelta a caso)."""
+    shown: list[dict] = []
+    content: list[dict] = []
+    for cand in cands[:AI_CANDIDATES]:
+        try:
+            thumb = _small_jpeg(_download(c, cand["thumb"]))
+        except Exception as exc:
+            log.info("miniatura scartata: %s", exc)
+            continue
+        shown.append(cand)
+        content += [
+            {"type": "text", "text": f"Foto {len(shown)}:"},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(thumb).decode()}},
+        ]
+    if not shown:
+        return None
+    content.append({"type": "text", "text": f"Soggetto: {subject_it} ({subject_en})."})
+    r = httpx.post(
+        f"{config.AI_BASE_URL}/chat/completions",
+        timeout=config.AI_TIMEOUT_S,
+        headers={"Authorization": f"Bearer {config.OPENROUTER_API_KEY}", "X-Title": "DAS Challenge"},
+        json={
+            "model": config.REFERENCE_MODEL or config.AI_MODEL,
+            "max_tokens": 400,
+            "messages": [{"role": "system", "content": PICK_SYSTEM}, {"role": "user", "content": content}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "scelta", "strict": True, "schema": PICK_SCHEMA},
+            },
+        },
+    )
+    if r.status_code >= 400:
+        raise RuntimeError(f"OpenRouter {r.status_code}: {r.text[:200]}")
+    text = ((r.json().get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    m = re.search(r"\{.*\}", text, re.S)
+    best = json.loads(m.group(0) if m else text).get("best")
+    if isinstance(best, int) and 1 <= best <= len(shown):
+        return shown[best - 1]
+    return None
+
+
+def fetch(query: str, rng: random.Random | None = None, subject: str | None = None) -> tuple[str | None, dict | None]:
     """(nome del file salvato, attribuzione), oppure (None, None) se non si trova
-    niente: il round parte lo stesso, col solo nome del soggetto."""
+    nessuna scultura: il round parte lo stesso, col solo nome del soggetto."""
     rng = rng or random
     try:
         with _client() as c:
-            for source in (_openverse, _commons):
+            cands = candidates(c, query)
+            rng.shuffle(cands)
+            order = cands
+            if cands and config.REFERENCE_AI and config.OPENROUTER_API_KEY:
                 try:
-                    candidates = source(c, query)
+                    chosen = _ai_pick(c, subject or query, query, cands)
+                    if chosen is None:
+                        log.info("il modello non ha trovato una scultura di «%s» fra %d foto", query, len(cands))
+                        order = []
+                    else:
+                        order = [chosen]
                 except Exception as exc:
-                    log.warning("ricerca reference %s fallita: %s", source.__name__, exc)
-                    continue
-                rng.shuffle(candidates)
-                for cand in candidates[:4]:
-                    try:
-                        name = media.save_image(_download(c, cand.pop("image")), "ref")
-                        return name, cand
-                    except Exception as exc:
-                        log.info("reference scartata: %s", exc)
+                    log.warning("scelta della reference col modello fallita: %s", exc)
+            for cand in order[:4]:
+                try:
+                    name = media.save_image(_download(c, cand["image"]), "ref")
+                    return name, {k: cand[k] for k in ("title", "creator", "license", "license_url", "source_url", "provider")}
+                except Exception as exc:
+                    log.info("reference scartata: %s", exc)
     except Exception as exc:  # pragma: no cover - rete giù
         log.warning("reference non disponibile: %s", exc)
     return None, None

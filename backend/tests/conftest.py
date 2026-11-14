@@ -28,7 +28,7 @@ def app_env(tmp_path, monkeypatch, jpeg):
     db.init(f"sqlite:///{tmp_path / 'test.db'}")
 
     # Niente rete: la reference è un'immagine finta salvata davvero.
-    def fake_fetch(query, rng=None):
+    def fake_fetch(query, rng=None, subject=None):
         from app import media
 
         return media.save_image(jpeg((10, 120, 10)), "ref"), {

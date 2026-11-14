@@ -15,7 +15,9 @@ foto delle creazioni, voto reciproco o giudice AI (OpenRouter). Vedi README.md.
 - `backend/app/realtime.py` — stanze WebSocket; `rooms.notify(code)` da qualunque thread
   rimanda lo stato a tutti i collegati, ciascuno con la sua vista.
 - `backend/app/subjects.py` — catalogo dei soggetti per difficoltà e tema, handicap.
-- `backend/app/references.py` — Openverse → Wikimedia Commons, foto salvata in locale con attribuzione.
+- `backend/app/references.py` — la reference è una **scultura in pasta da modellare** del soggetto, mai il soggetto
+  vero: ricerche «clay …» su Openverse → Wikimedia Commons, filtro sulle parole (`is_clay`), scelta
+  del modello fra le miniature (`_ai_pick`), foto salvata in locale con attribuzione.
 - `backend/app/judge.py` — giudice AI via OpenRouter (`/chat/completions`, JSON schema).
 - `frontend/src/pages/Match.tsx` — tutta la partita (lobby, round, giudizio, risultato, finale).
 - `backend/app/auth.py` — accesso con mail + codice OTP, sessione senza scadenza in cookie httpOnly.
