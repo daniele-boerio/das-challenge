@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Brain, Dices, Hourglass, Images, Shuffle, Sparkles, Swords, Timer, Users, Zap } from "lucide-react";
+import { Brain, Dices, Hourglass, Images, Palette, Shuffle, Sparkles, Swords, Timer, Users, Zap } from "lucide-react";
 import { api, prefs } from "../api";
 import { useApp } from "../App";
 import type { Difficulty, JudgeMode, Settings, TimerMode } from "../types";
@@ -117,6 +117,18 @@ export default function Home() {
               </div>
               <small className="muted">{TIMERS.find((t) => t.id === s.timer)?.hint}</small>
             </div>
+
+            <Toggle
+              on={s.colors}
+              onChange={(v) => upd({ colors: v })}
+              icon={<Palette size={18} />}
+              title="Avete paste colorate?"
+              hint={
+                s.colors
+                  ? "Sì: reference anche colorate, e il giudice tiene conto dei colori"
+                  : "No, solo DAS bianco: reference bianche e il giudice guarda solo la forma"
+              }
+            />
 
             <div className="row2">
               <div className="field">

@@ -45,9 +45,7 @@ avvicina al soggetto della reference.
 
 Come giudicare:
 - Conta la forma: silhouette, proporzioni, posa, volumi e i dettagli riconoscibili.
-- I giocatori hanno solo DAS bianco e nessun colore: le creazioni sono tutte bianche o \
-grigie. Ignora del tutto il colore, anche se la reference è colorata: non togliere punti \
-perché manca e non darne per una sfumatura. Conta solo la forma.
+{colors}
 - Ignora sfondo, luce e qualità della foto. Se una foto non mostra una scultura, dalle 0 \
 e dillo.
 - Tieni conto della difficoltà: su un soggetto difficile anche un risultato approssimativo \
@@ -59,6 +57,20 @@ Scrivi in italiano. Per ciascuna creazione un commento di una o due frasi, concr
 (cosa è riuscito, cosa manca) e simpatico, mai cattivo. Il verdetto è una frase sola, \
 da presentatore di gara, che dice chi vince il round e perché. Nella risposta dai un \
 elemento di `creations` per ogni lettera ricevuta, con la sua `label`."""
+
+
+WHITE_ONLY = """- I giocatori hanno solo DAS bianco e nessun colore: le creazioni sono tutte bianche o \
+grigie. Ignora del tutto il colore, anche se la reference è colorata: non togliere punti \
+perché manca e non darne per una sfumatura. Conta solo la forma."""
+
+WITH_COLORS = """- I giocatori hanno paste colorate o colori per dipingere: la forma conta di più, ma \
+colori giusti e ben messi sono un pregio e colori sbagliati o assenti un piccolo difetto."""
+
+
+def system_prompt(colors: bool) -> str:
+    """Il prompt del giudice per la partita: col DAS bianco il colore non conta, con
+    i colori sì (ma meno della forma)."""
+    return SYSTEM.replace("{colors}", WITH_COLORS if colors else WHITE_ONLY)
 
 
 def available() -> bool:
@@ -89,6 +101,7 @@ def judge(
     reference: str | None,
     entries: list[dict],
     rng: random.Random | None = None,
+    colors: bool = False,
 ) -> dict:
     """`entries` = [{"seat", "name", "photo"}]. Restituisce
     {"entries": {"<posto>": {"score", "comment"}}, "verdict"}. Solleva in caso di errore."""
@@ -125,7 +138,7 @@ def judge(
             "model": ai_models.resolve(),
             "max_tokens": 1000 + 400 * len(entries),
             "messages": [
-                {"role": "system", "content": SYSTEM},
+                {"role": "system", "content": system_prompt(colors)},
                 {"role": "user", "content": content},
             ],
             "response_format": {

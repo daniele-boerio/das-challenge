@@ -15,6 +15,7 @@ export interface Settings {
   powerups: boolean;
   handicap: "off" | "leader" | "random";
   memory: boolean;
+  colors: boolean;
 }
 
 export interface Player {

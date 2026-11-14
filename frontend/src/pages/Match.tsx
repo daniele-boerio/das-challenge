@@ -100,6 +100,7 @@ function Rules({ state }: { state: MatchState }) {
     <p className="muted rules">
       {s.rounds} round · tema {s.theme} · {judgeLabel(s.judge)} · {timerLabel(s.timer)}
       {s.rush && ` · rincorsa dopo ${s.rush_after} consegne (${s.rush_minutes} min)`}
+      {s.colors ? " · paste colorate" : " · solo DAS bianco"}
     </p>
   );
 }

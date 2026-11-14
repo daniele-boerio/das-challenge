@@ -112,3 +112,14 @@ def test_model_slug_is_fixed_against_the_catalog():
     assert ai_models.pick("anthropic/claude-opus-4-8", models) == "anthropic/claude-opus-4.8"
     assert ai_models.pick("anthropic/claude-opus-9", models) == "anthropic/claude-opus-5"
     assert ai_models.pick("x/y", []) == "x/y"
+
+
+def test_colors_setting_changes_queries_and_prompts():
+    from app import game, judge
+
+    assert references.queries("owl")[0] == "white clay owl"
+    assert "white" not in references.queries("owl", colors=True)[0]
+    assert "solo DAS bianco" in judge.system_prompt(False) and "{colors}" not in judge.system_prompt(False)
+    assert "paste colorate" in judge.system_prompt(True)
+    assert game.clean_settings({})["colors"] is False
+    assert game.clean_settings({"colors": True})["colors"] is True

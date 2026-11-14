@@ -239,7 +239,7 @@ def test_references_are_prepared_ahead(app_env, jpeg, monkeypatch):
     client, mp = app_env
     calls = []
     real = references.fetch
-    mp.setattr(references, "fetch", lambda q, rng=None, subject=None: calls.append(q) or real(q))
+    mp.setattr(references, "fetch", lambda q, rng=None, subject=None, colors=False: calls.append((q, colors)) or real(q))
     mp.setattr(main, "PREFETCH", True)
     started = []
     mp.setattr(main.threading, "Thread", lambda target, args, daemon: type("T", (), {"start": lambda self: started.append((target, args))})())
@@ -404,6 +404,7 @@ def test_ai_judge(app_env, jpeg):
     rnd = st["rounds"][0]
     assert len(calls) == 1 and calls[0]["reference"]
     assert [e["name"] for e in calls[0]["entries"]] == ["Daniele", "Giulia", "Marco"]
+    assert calls[0]["colors"] is False
     assert rnd["status"] == "done"
     e = entries(st)
     assert (e[0]["points"], e[1]["points"], e[2]["points"]) == (14.0, 18.0, 8.0)

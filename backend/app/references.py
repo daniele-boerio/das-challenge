@@ -42,8 +42,10 @@ CLAY_WORDS = re.compile(
 )
 
 
-def queries(subject: str) -> list[str]:
-    # Prima le sculture bianche, come quelle che si possono fare col DAS bianco senza colori.
+def queries(subject: str, colors: bool = False) -> list[str]:
+    if colors:
+        return [f"polymer clay {subject}", f"clay {subject}", f"plasticine {subject}", f"{subject} clay sculpture"]
+    # Col DAS bianco senza colori, prima le sculture bianche: sono quelle che si possono rifare.
     return [f"white clay {subject}", f"polymer clay {subject}", f"clay {subject}", f"{subject} clay sculpture"]
 
 
@@ -142,12 +144,12 @@ def _download(c: httpx.Client, url: str) -> bytes:
         return bytes(buf)
 
 
-def candidates(c: httpx.Client, subject: str) -> list[dict]:
+def candidates(c: httpx.Client, subject: str, colors: bool = False) -> list[dict]:
     """I risultati che si dichiarano di pasta da modellare, senza doppioni."""
     found: list[dict] = []
     seen: set[str] = set()
     for source in (_openverse, _commons):
-        for q in queries(subject):
+        for q in queries(subject, colors):
             try:
                 results = source(c, q)
             except Exception as exc:
@@ -170,13 +172,17 @@ PICK_SYSTEM = """Scegli la foto di riferimento per una sfida di scultura con il 
 foto di una SCULTURA FATTA A MANO in pasta da modellare (DAS, pongo, polymer clay, \
 plastilina, fimo, ceramica fatta a mano) che rappresenta il soggetto indicato: un \
 oggetto singolo, ben visibile, che due persone possano provare a rifare in un tempo \
-limitato. I giocatori hanno solo DAS bianco e nessun colore: preferisci sculture \
-bianche, grigie o di un solo colore, e quelle che si riconoscono dalla forma; scarta quelle \
-che senza i colori non si capirebbero più (dettagli solo dipinti, motivi colorati, \
-tanti pezzi di colori diversi). Scarta anche: il soggetto vero (animali, cibo, oggetti reali), disegni, tutorial \
+limitato. {colors} Scarta anche: il soggetto vero (animali, cibo, oggetti reali), disegni, tutorial \
 con tante foto, collage, gioielli minuscoli, foto sfocate o dove la scultura è piccola.
 Rispondi solo con il JSON richiesto: `best` è il numero della foto migliore, oppure \
 null se nessuna va bene."""
+
+PICK_WHITE = """I giocatori hanno solo DAS bianco e nessun colore: preferisci sculture \
+bianche, grigie o di un solo colore, e quelle che si riconoscono dalla forma; scarta quelle \
+che senza i colori non si capirebbero più (dettagli solo dipinti, motivi colorati, \
+tanti pezzi di colori diversi)."""
+
+PICK_COLORS = """I giocatori hanno paste colorate: vanno bene anche sculture a più colori."""
 
 PICK_SCHEMA = {
     "type": "object",
@@ -196,7 +202,9 @@ def _small_jpeg(data: bytes, side: int = 512) -> bytes:
     return buf.getvalue()
 
 
-def _ai_pick(c: httpx.Client, subject_it: str, subject_en: str, cands: list[dict]) -> dict | None:
+def _ai_pick(
+    c: httpx.Client, subject_it: str, subject_en: str, cands: list[dict], colors: bool = False
+) -> dict | None:
     """Il candidato scelto dal modello; None se nessuno va bene. Solleva se la
     chiamata fallisce (chi chiama ripiega sulla scelta a caso)."""
     def thumb_of(cand):
@@ -230,7 +238,7 @@ def _ai_pick(c: httpx.Client, subject_it: str, subject_en: str, cands: list[dict
         json={
             "model": ai_models.resolve(config.REFERENCE_MODEL) if config.REFERENCE_MODEL else ai_models.fast(),
             "max_tokens": 400,
-            "messages": [{"role": "system", "content": PICK_SYSTEM}, {"role": "user", "content": content}],
+            "messages": [{"role": "system", "content": PICK_SYSTEM.replace("{colors}", PICK_COLORS if colors else PICK_WHITE)}, {"role": "user", "content": content}],
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {"name": "scelta", "strict": True, "schema": PICK_SCHEMA},
@@ -247,18 +255,20 @@ def _ai_pick(c: httpx.Client, subject_it: str, subject_en: str, cands: list[dict
     return None
 
 
-def fetch(query: str, rng: random.Random | None = None, subject: str | None = None) -> tuple[str | None, dict | None]:
+def fetch(
+    query: str, rng: random.Random | None = None, subject: str | None = None, colors: bool = False
+) -> tuple[str | None, dict | None]:
     """(nome del file salvato, attribuzione), oppure (None, None) se non si trova
     nessuna scultura: il round parte lo stesso, col solo nome del soggetto."""
     rng = rng or random
     try:
         with _client() as c:
-            cands = candidates(c, query)
+            cands = candidates(c, query, colors)
             rng.shuffle(cands)
             order = cands
             if cands and config.REFERENCE_AI and config.OPENROUTER_API_KEY:
                 try:
-                    chosen = _ai_pick(c, subject or query, query, cands)
+                    chosen = _ai_pick(c, subject or query, query, cands, colors)
                     if chosen is None:
                         log.info("il modello non ha trovato una scultura di «%s» fra %d foto", query, len(cands))
                         order = []

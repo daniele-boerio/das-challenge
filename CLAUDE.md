@@ -41,8 +41,9 @@ foto delle creazioni, voto reciproco o giudice AI (OpenRouter). Vedi README.md.
 - Le colonne `host_*`/`guest_*` di `matches` e `rounds` sono della versione a due: i dati
   sono passati a `players`/`entries` con `db._migrate_players` (una volta per partita). Non
   si usano più, restano perché SQLite le ha già.
-- Si gioca con DAS bianco e senza colori: il giudice ignora il colore, la scelta della reference
-  preferisce sculture bianche o monocolore che si riconoscono dalla forma.
+- L'impostazione `colors` (default false = solo DAS bianco) decide il colore: senza, il giudice
+  ignora il colore e la scelta della reference preferisce sculture bianche o monocolore che si
+  riconoscono dalla forma; con, reference anche colorate e il colore conta un po' nel voto.
 - Nessun segreto nel repo: `OPENROUTER_API_KEY` e le `SMTP_*` solo nelle variabili di Coolify.
 - Lo schema DB è creato con `create_all`; le colonne nuove di tabelle esistenti vanno in
   `db._NEW_COLUMNS`. Se una colonna esistente cambia, introdurre Alembic.

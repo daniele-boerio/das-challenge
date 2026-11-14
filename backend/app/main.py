@@ -275,8 +275,8 @@ def join(code: str, uid: int = Depends(me)):
     return out
 
 
-def _fetch_reference(subject: tuple):
-    return references.fetch(subject[1], subject=subject[0])
+def _fetch_reference(subject: tuple, colors: bool = False):
+    return references.fetch(subject[1], subject=subject[0], colors=colors)
 
 
 # ── reference pronte in anticipo ──────────────────────────────────────────────
@@ -320,7 +320,8 @@ def _prefetch_worker(code: str):
                 if m.status == "finished" or len(m.rounds) >= m.settings["rounds"]:
                     return  # non ci sono altri round da preparare
                 _, subject = game.choose_subject(m, d, taken)
-            image, attribution = _fetch_reference(subject)
+                colors = game.settings_of(m)["colors"]
+            image, attribution = _fetch_reference(subject, colors)
             with _ready_lock:
                 _ready[(code, d)] = (subject, image, attribution)
     except Exception:
@@ -359,11 +360,12 @@ def start_round(code: str, body: RoundIn, uid: int = Depends(me)):
         game.check_can_start(m, seat)
         difficulty, subject = game.choose_subject(m, body.difficulty)
         used = {r.subject_key for r in m.rounds}
+        colors = game.settings_of(m)["colors"]
     ready = _take_ready(code.upper(), difficulty, used)
     if ready:
         subject, image, attribution = ready
     else:
-        image, attribution = _fetch_reference(subject)
+        image, attribution = _fetch_reference(subject, colors)
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
         game.check_can_start(m, seat)
@@ -388,11 +390,12 @@ def use_powerup(code: str, body: PowerupIn, uid: int = Depends(me)):
         number = r.number
         difficulty, subject = game.choose_subject(m, r.difficulty)
         used = {x.subject_key for x in m.rounds}
+        colors = game.settings_of(m)["colors"]
     ready = _take_ready(code.upper(), difficulty, used)
     if ready:
         subject, image, attribution = ready
     else:
-        image, attribution = _fetch_reference(subject)
+        image, attribution = _fetch_reference(subject, colors)
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
         r, _ = game.check_powerup(m, seat, "reroll")
@@ -419,6 +422,7 @@ def _run_judge(code: str, number: int):
                 {"seat": e.seat, "name": game.player(m, e.seat).name, "photo": e.photo}
                 for e in game.delivered(r)
             ],
+            colors=game.settings_of(m)["colors"],
         )
     try:
         result, error = judge.judge(**args), None

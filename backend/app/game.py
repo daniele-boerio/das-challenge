@@ -73,6 +73,8 @@ def default_settings() -> dict:
         "powerups": True,
         "handicap": "leader",
         "memory": True,
+        # False = solo DAS bianco: il giudice ignora il colore e le reference sono bianche
+        "colors": False,
     }
 
 
@@ -98,7 +100,7 @@ def clean_settings(raw: dict | None) -> dict:
         s["minutes"][d] = _int(minutes, d, s["minutes"][d], 1, 180)
     if raw.get("timer") in TIMER_MODES:
         s["timer"] = raw["timer"]
-    for flag in ("rush", "powerups", "memory"):
+    for flag in ("rush", "powerups", "memory", "colors"):
         if flag in raw:
             s[flag] = bool(raw[flag])
     s["rush_after"] = _int(raw, "rush_after", s["rush_after"], 1, MAX_PLAYERS - 1)
