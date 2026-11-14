@@ -1,0 +1,33 @@
+services:
+  # Nginx + build React: l'unico servizio con dominio pubblico (das.spassocasa.it).
+  frontend:
+    build: ./frontend
+    environment:
+      - SERVICE_FQDN_FRONTEND
+    depends_on:
+      - das-backend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:80"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # FastAPI. Nessun dominio: ci parla solo nginx. Nome unico perché, con
+  # "Connect To Predefined Network", un `backend` generico collide con altri progetti.
+  das-backend:
+    build: ./backend
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - AI_MODEL=${AI_MODEL:-anthropic/claude-opus-4-8}
+      - ACCESS_CODE=${ACCESS_CODE:-}
+    volumes:
+      # Database SQLite e foto: è l'unica cosa da tenere nei backup.
+      - das-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  das-data:
