@@ -76,3 +76,25 @@ def forget():
     """Dopo un 400 sul modello si rilegge il listino alla prossima chiamata."""
     with _lock:
         _cache.clear()
+
+
+def fast() -> str:
+    """Un modello veloce che vede le immagini, per i lavori brevi (scegliere la
+    reference fra le miniature): il Claude Sonnet più recente, o in mancanza
+    quello del giudice. Il giudice resta su `AI_MODEL`."""
+    key = "__fast__"
+    now = time.time()
+    with _lock:
+        hit = _cache.get(key)
+        if hit and hit[0] > now:
+            return hit[1]
+    try:
+        models = _catalog()
+    except Exception as exc:
+        log.warning("listino di OpenRouter non disponibile: %s", exc)
+        return resolve()
+    sonnet = [m for m in models if m["id"].startswith("anthropic/claude-sonnet") and _sees_images(m)]
+    slug = max(sonnet, key=lambda m: m.get("created") or 0)["id"] if sonnet else pick(config.AI_MODEL, models)
+    with _lock:
+        _cache[key] = (now + _TTL, slug)
+    return slug

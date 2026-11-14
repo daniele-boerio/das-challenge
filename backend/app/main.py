@@ -57,6 +57,14 @@ def tick_all():
                 launch.append((m.code, game.current_round(m).number))
     for code, number in launch:
         start_judge(code, number)
+    # Le reference preparate per partite ormai finite non servono più.
+    with _ready_lock:
+        codes = {c for c, _ in _ready}
+    if codes:
+        with db.session_scope() as s:
+            done = s.scalars(select(Match.code).where(Match.code.in_(codes), Match.status == "finished")).all()
+        for code in done:
+            forget_ready(code)
     for code in changed:
         rooms.notify(code)
 
@@ -239,7 +247,9 @@ class VoteIn(BaseModel):
 def create(body: CreateIn, uid: int = Depends(me)):
     with LOCK, db.session_scope() as s:
         m = game.create_match(s, _user(s, uid), body.settings)
-        return {"code": m.code, "state": _state(s, m, 0)}
+        out = {"code": m.code, "state": _state(s, m, 0)}
+    prefetch(out["code"])
+    return out
 
 
 @app.get("/api/matches/{code}")
@@ -269,6 +279,77 @@ def _fetch_reference(subject: tuple):
     return references.fetch(subject[1], subject=subject[0])
 
 
+# ── reference pronte in anticipo ──────────────────────────────────────────────
+# Cercare la scultura (ricerche, miniature, modello) richiede decine di secondi:
+# troppi da aspettare dopo «Via al round!». Così, appena la partita esiste e poi a
+# ogni round, un thread prepara una reference per ciascuna difficoltà; il round
+# prende quella pronta e il thread rifà la scorta. Sta in memoria: dopo un
+# riavvio si ricomincia a cercare, e nel frattempo si cerca al momento come prima.
+
+PREFETCH = True  # nei test è spento
+_ready: dict[tuple[str, str], tuple[tuple, str | None, dict | None]] = {}
+_ready_lock = threading.Lock()
+_prefetching: set[str] = set()
+
+
+def _take_ready(code: str, difficulty: str, used: set[str]):
+    with _ready_lock:
+        item = _ready.pop((code, difficulty), None)
+    if item and subjects_key(difficulty, item[0]) not in used:
+        return item
+    return None
+
+
+def subjects_key(difficulty: str, subject: tuple) -> str:
+    from .subjects import key
+
+    return key(difficulty, subject[0])
+
+
+def _prefetch_worker(code: str):
+    from .subjects import DIFFICULTIES
+
+    try:
+        for d in DIFFICULTIES:
+            with _ready_lock:
+                if (code, d) in _ready:
+                    continue
+                taken = {subjects_key(dd, it[0]) for (c, dd), it in _ready.items() if c == code}
+            with LOCK, db.session_scope() as s:
+                m = game.get_match(s, code)
+                if m.status == "finished" or len(m.rounds) >= m.settings["rounds"]:
+                    return  # non ci sono altri round da preparare
+                _, subject = game.choose_subject(m, d, taken)
+            image, attribution = _fetch_reference(subject)
+            with _ready_lock:
+                _ready[(code, d)] = (subject, image, attribution)
+    except Exception:
+        log.exception("preparazione delle reference fallita")
+    finally:
+        with _ready_lock:
+            _prefetching.discard(code)
+
+
+def prefetch(code: str):
+    if not PREFETCH:
+        return
+    code = code.upper()
+    with _ready_lock:
+        if code in _prefetching:
+            return
+        _prefetching.add(code)
+    threading.Thread(target=_prefetch_worker, args=(code,), daemon=True).start()
+
+
+def forget_ready(code: str):
+    """Partita finita: le reference preparate e mai usate si buttano, file compresi."""
+    with _ready_lock:
+        items = [_ready.pop(k) for k in [k for k in _ready if k[0] == code.upper()]]
+    for _, image, _ in items:
+        if image:
+            media.path_of(image).unlink(missing_ok=True)
+
+
 @app.post("/api/matches/{code}/rounds")
 def start_round(code: str, body: RoundIn, uid: int = Depends(me)):
     # La foto si cerca fuori dal lock (sono secondi di rete), poi si ricontrolla tutto.
@@ -277,13 +358,19 @@ def start_round(code: str, body: RoundIn, uid: int = Depends(me)):
         seat = game.require_seat(m, uid)
         game.check_can_start(m, seat)
         difficulty, subject = game.choose_subject(m, body.difficulty)
-    image, attribution = _fetch_reference(subject)
+        used = {r.subject_key for r in m.rounds}
+    ready = _take_ready(code.upper(), difficulty, used)
+    if ready:
+        subject, image, attribution = ready
+    else:
+        image, attribution = _fetch_reference(subject)
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
         game.check_can_start(m, seat)
         game.create_round(s, m, difficulty, subject, image, attribution)
         out = _state(s, m, seat)
     rooms.notify(code.upper())
+    prefetch(code)  # la scorta per il round dopo, mentre si scolpisce
     return out
 
 
@@ -300,7 +387,12 @@ def use_powerup(code: str, body: PowerupIn, uid: int = Depends(me)):
             return out
         number = r.number
         difficulty, subject = game.choose_subject(m, r.difficulty)
-    image, attribution = _fetch_reference(subject)
+        used = {x.subject_key for x in m.rounds}
+    ready = _take_ready(code.upper(), difficulty, used)
+    if ready:
+        subject, image, attribution = ready
+    else:
+        image, attribution = _fetch_reference(subject)
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
         r, _ = game.check_powerup(m, seat, "reroll")
@@ -309,6 +401,7 @@ def use_powerup(code: str, body: PowerupIn, uid: int = Depends(me)):
         game.apply_reroll(m, r, seat, subject, image, attribution)
         out = _state(s, m, seat)
     rooms.notify(code.upper())
+    prefetch(code)
     return out
 
 
@@ -415,6 +508,7 @@ def finish(code: str, uid: int = Depends(me)):
         seat = game.require_seat(m, uid)
         game.finish(m, seat)
         out = _state(s, m, seat)
+    forget_ready(code)
     rooms.notify(code.upper())
     return out
 
@@ -434,6 +528,8 @@ def rematch(code: str, uid: int = Depends(me)):
         m.rematch_code = new.code
         out = {"code": new.code, "state": _state(s, new, 0)}
     rooms.notify(code.upper())
+    forget_ready(code)
+    prefetch(out["code"])
     return out
 
 

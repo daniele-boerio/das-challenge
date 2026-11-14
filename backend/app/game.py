@@ -268,10 +268,10 @@ def check_can_start(m: Match, seat: int):
         raise GameError("C'è già un round in corso", 409)
 
 
-def choose_subject(m: Match, difficulty: str):
+def choose_subject(m: Match, difficulty: str, also_exclude: set[str] | None = None):
     if difficulty not in DIFFICULTIES:
         difficulty = random.choice(DIFFICULTIES)
-    used = {r.subject_key for r in m.rounds}
+    used = {r.subject_key for r in m.rounds} | (also_exclude or set())
     return difficulty, pick(difficulty, m.settings["theme"], used)
 
 

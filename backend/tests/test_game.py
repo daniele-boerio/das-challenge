@@ -232,6 +232,40 @@ def test_finish_early_ranks_everyone(app_env, jpeg):
     assert st["status"] == "finished" and st["winners"] == [0, 1]
 
 
+def test_references_are_prepared_ahead(app_env, jpeg, monkeypatch):
+    """Il round prende la reference già pronta invece di cercarla al momento."""
+    from app import main, references
+
+    client, mp = app_env
+    calls = []
+    real = references.fetch
+    mp.setattr(references, "fetch", lambda q, rng=None, subject=None: calls.append(q) or real(q))
+    mp.setattr(main, "PREFETCH", True)
+    started = []
+    mp.setattr(main.threading, "Thread", lambda target, args, daemon: type("T", (), {"start": lambda self: started.append((target, args))})())
+    code, (host, guest) = setup_match(client, {"judge": "voto", "rounds": 2})
+    target, args = started.pop(0)
+    target(*args)  # il thread, qui in primo piano
+    assert len(calls) == 3 and len(main._ready) == 3
+    n = len(calls)
+    st = host.post(f"/api/matches/{code}/rounds", json={"difficulty": "difficile"}).json()
+    assert len(calls) == n  # nessuna ricerca al momento
+    assert st["rounds"][0]["difficulty"] == "difficile" and st["rounds"][0]["image"]
+    target, args = started.pop(0)
+    target(*args)  # rifà la scorta della difficile, con un soggetto diverso
+    subjects = {main._ready[(code, d)][0][0] for d in ("facile", "media", "difficile")}
+    assert st["rounds"][0]["subject"] not in subjects and len(calls) == n + 1
+    # a partita finita il ticker butta la scorta, file compresi
+    from app import db, media
+    from app.models import Match
+
+    files = [it[1] for it in main._ready.values()]
+    with db.session_scope() as s:
+        s.query(Match).filter(Match.code == code).update({"status": "finished"})
+    main.tick_all()
+    assert not main._ready and not any(media.path_of(f).exists() for f in files)
+
+
 # ── tempo ─────────────────────────────────────────────────────────────────────
 
 

@@ -54,7 +54,9 @@ Per ogni soggetto si cerca «polymer clay …», «clay …», «plasticine …�
 nei tag o nelle categorie dicono di essere di pasta da modellare. Se c'è la chiave OpenRouter, un
 modello guarda le miniature e sceglie quella che è davvero una scultura del soggetto, singola e ben
 visibile (`REFERENCE_AI=false` per spegnerlo, `REFERENCE_MODEL` per usare un modello diverso dal
-giudice). Se non si trova nessuna scultura il round parte col solo nome del soggetto.
+giudice; di default sceglie il Claude Sonnet più recente, che è veloce). Le reference si preparano in
+anticipo, una per difficoltà, appena la partita esiste e mentre si scolpisce: «Via al round!» parte
+subito. Se non si trova nessuna scultura il round parte col solo nome del soggetto.
 La foto si salva in locale con la sua attribuzione, che compare sotto l'immagine come chiede la licenza.
 
 ## Stack

@@ -20,6 +20,7 @@ import json
 import logging
 import random
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
@@ -31,7 +32,7 @@ OPENVERSE = "https://api.openverse.org/v1/images/"
 COMMONS = "https://commons.wikimedia.org/w/api.php"
 MAX_BYTES = 12 * 1024 * 1024
 WANTED = 8          # candidati buoni dopo cui si smette di cercare
-AI_CANDIDATES = 8   # miniature mandate al modello
+AI_CANDIDATES = 6   # miniature mandate al modello
 
 # Le parole che dicono «è fatto di pasta da modellare».
 CLAY_WORDS = re.compile(
@@ -194,13 +195,21 @@ def _small_jpeg(data: bytes, side: int = 512) -> bytes:
 def _ai_pick(c: httpx.Client, subject_it: str, subject_en: str, cands: list[dict]) -> dict | None:
     """Il candidato scelto dal modello; None se nessuno va bene. Solleva se la
     chiamata fallisce (chi chiama ripiega sulla scelta a caso)."""
-    shown: list[dict] = []
-    content: list[dict] = []
-    for cand in cands[:AI_CANDIDATES]:
+    def thumb_of(cand):
         try:
-            thumb = _small_jpeg(_download(c, cand["thumb"]))
+            return _small_jpeg(_download(c, cand["thumb"]), 384)
         except Exception as exc:
             log.info("miniatura scartata: %s", exc)
+            return None
+
+    # Le miniature si scaricano tutte insieme: una dopo l'altra erano secondi persi.
+    pool = cands[:AI_CANDIDATES]
+    with ThreadPoolExecutor(len(pool) or 1) as ex:
+        thumbs = list(ex.map(thumb_of, pool))
+    shown: list[dict] = []
+    content: list[dict] = []
+    for cand, thumb in zip(pool, thumbs):
+        if thumb is None:
             continue
         shown.append(cand)
         content += [
@@ -215,7 +224,7 @@ def _ai_pick(c: httpx.Client, subject_it: str, subject_en: str, cands: list[dict
         timeout=config.AI_TIMEOUT_S,
         headers={"Authorization": f"Bearer {config.OPENROUTER_API_KEY}", "X-Title": "DAS Challenge"},
         json={
-            "model": ai_models.resolve(config.REFERENCE_MODEL or config.AI_MODEL),
+            "model": ai_models.resolve(config.REFERENCE_MODEL) if config.REFERENCE_MODEL else ai_models.fast(),
             "max_tokens": 400,
             "messages": [{"role": "system", "content": PICK_SYSTEM}, {"role": "user", "content": content}],
             "response_format": {

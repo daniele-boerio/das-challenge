@@ -43,6 +43,8 @@ def app_env(tmp_path, monkeypatch, jpeg):
     monkeypatch.setattr(main, "start_judge", lambda code, n: main._run_judge(code, n))
     # Niente ticker in background: i test chiamano main.tick_all() quando serve.
     monkeypatch.setattr(main, "TICKER", False)
+    # Niente reference preparate in background: i test le chiedono a mano.
+    monkeypatch.setattr(main, "PREFETCH", False)
     with TestClient(main.app) as client:
         client.sent_codes = sent_codes
         yield client, monkeypatch
