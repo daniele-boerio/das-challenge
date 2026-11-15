@@ -47,6 +47,9 @@ foto delle creazioni, voto reciproco o giudice AI (OpenRouter). Vedi README.md.
 - L'impostazione `colors` (default false = solo DAS bianco) decide il colore: senza, il giudice
   ignora il colore e la scelta della reference preferisce sculture bianche o monocolore che si
   riconoscono dalla forma; con, reference anche colorate e il colore conta un po' nel voto.
+- L'AI (giudice, foto generate, scelta delle foto) si usa solo se fra i giocatori c'è un account di
+  `AI_EMAILS` (variabile di Coolify, mai la mail nel repo): `game.ai_allowed(m)`; senza, giudice a voto
+  e reference solo cercate, col filtro sulle parole. Vuoto = nessuno, `*` = tutti (i test).
 - Nessun segreto nel repo: `OPENROUTER_API_KEY` e le `SMTP_*` solo nelle variabili di Coolify.
 - Lo schema DB è creato con `create_all`; le colonne nuove di tabelle esistenti vanno in
   `db._NEW_COLUMNS`. Se una colonna esistente cambia, introdurre Alembic.

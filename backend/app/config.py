@@ -33,6 +33,9 @@ REFERENCE_TIMEOUT_S = float(os.getenv("REFERENCE_TIMEOUT_S", "12"))
 REFERENCE_AI = os.getenv("REFERENCE_AI", "true").lower() in ("1", "true", "yes")
 REFERENCE_MODEL = os.getenv("REFERENCE_MODEL", "")  # vuoto = AI_MODEL
 # Reference generate da un modello di immagini (prima scelta); la ricerca resta di riserva.
+# Chi può usare l'AI (giudice, foto generate, scelta delle foto): una partita la usa solo se
+# fra i giocatori c'è uno di questi account. Mail separate da virgole; vuoto = nessuno, "*" = tutti.
+AI_EMAILS = {e.strip().lower() for e in os.getenv("AI_EMAILS", "").split(",") if e.strip()}
 IMAGE_AI = os.getenv("IMAGE_AI", "true").lower() in ("1", "true", "yes")
 IMAGE_MODEL = os.getenv("IMAGE_MODEL", "openai/gpt-image-2")
 IMAGE_TIMEOUT_S = float(os.getenv("IMAGE_TIMEOUT_S", "60"))

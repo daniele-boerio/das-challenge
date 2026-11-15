@@ -25,10 +25,11 @@ def app_env(tmp_path, monkeypatch, jpeg):
     sent_codes: dict[str, str] = {}
     monkeypatch.setattr(auth, "send_code_mail", lambda email, code: sent_codes.__setitem__(email, code))
     monkeypatch.setattr(config, "OPENROUTER_API_KEY", "")
+    monkeypatch.setattr(config, "AI_EMAILS", {"*"})
     db.init(f"sqlite:///{tmp_path / 'test.db'}")
 
     # Niente rete: la reference è un'immagine finta salvata davvero.
-    def fake_fetch(query, rng=None, subject=None, colors=False):
+    def fake_fetch(query, rng=None, subject=None, colors=False, ai=True):
         from app import media
 
         return media.save_image(jpeg((10, 120, 10)), "ref"), {

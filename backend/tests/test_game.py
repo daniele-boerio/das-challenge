@@ -239,7 +239,7 @@ def test_references_are_prepared_ahead(app_env, jpeg, monkeypatch):
     client, mp = app_env
     calls = []
     real = references.fetch
-    mp.setattr(references, "fetch", lambda q, rng=None, subject=None, colors=False: calls.append((q, colors)) or real(q))
+    mp.setattr(references, "fetch", lambda q, rng=None, subject=None, colors=False, ai=True: calls.append((q, colors)) or real(q))
     mp.setattr(main, "PREFETCH", True)
     started = []
     mp.setattr(main.threading, "Thread", lambda target, args, daemon: type("T", (), {"start": lambda self: started.append((target, args))})())
@@ -616,3 +616,54 @@ def test_judge_missing_creation_fails(app_env, jpeg, monkeypatch):
     with pytest.raises(ValueError):
         judge.judge("Mela", "facile", None, [{"seat": 0, "name": "A", "photo": photo},
                                              {"seat": 1, "name": "B", "photo": photo}])
+
+
+# ── chi può usare l'AI ────────────────────────────────────────────────────────
+
+
+def test_ai_only_with_an_allowed_player(app_env, jpeg):
+    """Senza un account di AI_EMAILS fra i giocatori: niente giudice AI, niente foto
+    generate né scelte dal modello. Entra lui, e l'AI si accende."""
+    from app import main
+
+    client, mp = app_env
+    mp.setattr(config, "OPENROUTER_API_KEY", "sk-or-test")
+    mp.setattr(config, "AI_EMAILS", {"giulia@example.com"})
+    seen = []
+    mp.setattr(main, "_fetch_reference", lambda subject, colors=False, difficulty="media", ai=True: seen.append(ai) or (None, None))
+    called = []
+    mp.setattr(judge, "judge", lambda **kw: called.append(kw) or {"entries": {}, "verdict": ""})
+
+    host = login(client, "dani@example.com", "Daniele")
+    assert host.get("/api/config").json()["ai_available"] is False
+    code = host.post("/api/matches", json={"settings": {"judge": "ai"}}).json()["code"]
+    st = host.get(f"/api/matches/{code}").json()
+    assert st["ai"] is False and st["settings"]["judge"] == "voto"
+
+    marco = new_player(client, "marco@example.com", "Marco")
+    marco.post(f"/api/matches/{code}/join")
+    host.post(f"/api/matches/{code}/rounds", json={"difficulty": "facile"})
+    upload(host, code, 1, jpeg)
+    upload(marco, code, 1, jpeg)
+    assert seen == [False] and not called
+    assert host.get(f"/api/matches/{code}").json()["rounds"][0]["status"] == "judging"
+
+    # Una partita nuova con Giulia dentro: l'AI c'è.
+    code = host.post("/api/matches", json={"settings": {"judge": "ai"}}).json()["code"]
+    giulia = new_player(client, "giulia@example.com", "Giulia")
+    assert giulia.get("/api/config").json()["ai_available"] is True
+    giulia.post(f"/api/matches/{code}/join")
+    st = host.get(f"/api/matches/{code}").json()
+    assert st["ai"] is True and st["settings"]["judge"] == "ai"
+    host.post(f"/api/matches/{code}/rounds", json={"difficulty": "facile"})
+    assert seen[-1] is True
+
+
+def test_reference_without_ai_skips_the_model_pick(monkeypatch):
+    from app import references
+
+    monkeypatch.setattr(config, "OPENROUTER_API_KEY", "sk-or-test")
+    monkeypatch.setattr(references, "candidates", lambda c, s, colors=False: [{"image": "x", "thumb": "x"}])
+    monkeypatch.setattr(references, "_download", lambda c, url: (_ for _ in ()).throw(OSError("rete")))
+    monkeypatch.setattr(references, "_ai_pick", lambda *a, **k: (_ for _ in ()).throw(AssertionError("niente AI")))
+    assert references.fetch("owl", subject="Gufo", ai=False) == (None, None)

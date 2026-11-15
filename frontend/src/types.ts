@@ -86,6 +86,7 @@ export interface MatchState {
   status: "lobby" | "ready" | "playing" | "finished";
   you: number | null;
   max_players: number;
+  ai?: boolean;
   server_now: number;
   created_at: number;
   finished_at: number | null;

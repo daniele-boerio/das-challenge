@@ -145,9 +145,12 @@ def health():
 
 
 @app.get("/api/config")
-def get_config():
+def get_config(uid: int | None = Depends(viewer)):
+    with db.session_scope() as s:
+        ai = game.ai_user(s.get(User, uid)) if uid else False
     return {
-        "ai_available": judge.available(),
+        # L'AI la accende solo chi è in `AI_EMAILS`: per gli altri il giudice AI non si sceglie.
+        "ai_available": ai,
         "themes": THEMES,
         "default_minutes": DEFAULT_MINUTES,
         "multipliers": MULTIPLIER,
@@ -269,18 +272,25 @@ def get_state(code: str, uid: int | None = Depends(viewer)):
 def join(code: str, uid: int = Depends(me)):
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
+        before = game.ai_allowed(m)
         seat = game.join(s, m, _user(s, uid))
+        changed = game.ai_allowed(m) != before
         out = {"state": _state(s, m, seat)}
     rooms.notify(m.code)
+    if changed:  # è entrato chi ha l'AI: le foto già cercate senza si rifanno
+        forget_ready(m.code)
+        prefetch(m.code)
     return out
 
 
-def _fetch_reference(subject: tuple, colors: bool = False, difficulty: str = "media"):
-    """Prima la foto generata (c'è sempre, ed è veloce); se fallisce, la ricerca."""
-    image, attribution = imagegen.generate(subject[0], subject[1], difficulty, colors)
-    if image:
-        return image, attribution
-    return references.fetch(subject[1], subject=subject[0], colors=colors)
+def _fetch_reference(subject: tuple, colors: bool = False, difficulty: str = "media", ai: bool = True):
+    """Con l'AI, prima la foto generata (c'è sempre, ed è veloce) e se fallisce la
+    ricerca con la scelta del modello. Senza, solo la ricerca col filtro sulle parole."""
+    if ai:
+        image, attribution = imagegen.generate(subject[0], subject[1], difficulty, colors)
+        if image:
+            return image, attribution
+    return references.fetch(subject[1], subject=subject[0], colors=colors, ai=ai)
 
 
 # ── reference pronte in anticipo ──────────────────────────────────────────────
@@ -291,17 +301,23 @@ def _fetch_reference(subject: tuple, colors: bool = False, difficulty: str = "me
 # riavvio si ricomincia a cercare, e nel frattempo si cerca al momento come prima.
 
 PREFETCH = True  # nei test è spento
-_ready: dict[tuple[str, str], tuple[tuple, str | None, dict | None]] = {}
+_ready: dict[tuple[str, str], tuple[tuple, str | None, dict | None, bool]] = {}
 _ready_lock = threading.Lock()
 _prefetching: set[str] = set()
 
 
-def _take_ready(code: str, difficulty: str, used: set[str]):
+def _take_ready(code: str, difficulty: str, used: set[str], ai: bool):
+    """(soggetto, foto, attribuzione) preparati, se fatti con la stessa AI di adesso:
+    una foto cercata prima che entrasse chi ha l'AI (o viceversa) si butta."""
     with _ready_lock:
         item = _ready.pop((code, difficulty), None)
-    if item and subjects_key(difficulty, item[0]) not in used:
-        return item
-    return None
+    if not item:
+        return None
+    if item[3] != ai or subjects_key(difficulty, item[0]) in used:
+        if item[1]:
+            media.path_of(item[1]).unlink(missing_ok=True)
+        return None
+    return item[:3]
 
 
 def subjects_key(difficulty: str, subject: tuple) -> str:
@@ -325,9 +341,10 @@ def _prefetch_worker(code: str):
                     return  # non ci sono altri round da preparare
                 _, subject = game.choose_subject(m, d, taken)
                 colors = game.settings_of(m)["colors"]
-            image, attribution = _fetch_reference(subject, colors, d)
+                ai = game.ai_allowed(m)
+            image, attribution = _fetch_reference(subject, colors, d, ai)
             with _ready_lock:
-                _ready[(code, d)] = (subject, image, attribution)
+                _ready[(code, d)] = (subject, image, attribution, ai)
     except Exception:
         log.exception("preparazione delle reference fallita")
     finally:
@@ -350,7 +367,7 @@ def forget_ready(code: str):
     """Partita finita: le reference preparate e mai usate si buttano, file compresi."""
     with _ready_lock:
         items = [_ready.pop(k) for k in [k for k in _ready if k[0] == code.upper()]]
-    for _, image, _ in items:
+    for _, image, _, _ in items:
         if image:
             media.path_of(image).unlink(missing_ok=True)
 
@@ -365,11 +382,12 @@ def start_round(code: str, body: RoundIn, uid: int = Depends(me)):
         difficulty, subject = game.choose_subject(m, body.difficulty)
         used = {r.subject_key for r in m.rounds}
         colors = game.settings_of(m)["colors"]
-    ready = _take_ready(code.upper(), difficulty, used)
+        ai = game.ai_allowed(m)
+    ready = _take_ready(code.upper(), difficulty, used, ai)
     if ready:
         subject, image, attribution = ready
     else:
-        image, attribution = _fetch_reference(subject, colors, difficulty)
+        image, attribution = _fetch_reference(subject, colors, difficulty, ai)
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
         game.check_can_start(m, seat)
@@ -395,11 +413,12 @@ def use_powerup(code: str, body: PowerupIn, uid: int = Depends(me)):
         difficulty, subject = game.choose_subject(m, r.difficulty)
         used = {x.subject_key for x in m.rounds}
         colors = game.settings_of(m)["colors"]
-    ready = _take_ready(code.upper(), difficulty, used)
+        ai = game.ai_allowed(m)
+    ready = _take_ready(code.upper(), difficulty, used, ai)
     if ready:
         subject, image, attribution = ready
     else:
-        image, attribution = _fetch_reference(subject, colors, difficulty)
+        image, attribution = _fetch_reference(subject, colors, difficulty, ai)
     with LOCK, db.session_scope() as s:
         m = game.get_match(s, code)
         r, _ = game.check_powerup(m, seat, "reroll")

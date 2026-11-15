@@ -470,8 +470,29 @@ def set_photo(m: Match, r: Round, seat: int, name: str) -> str | None:
     return old
 
 
+def ai_user(user) -> bool:
+    """Questo account può accendere l'AI? (la paga lui: `AI_EMAILS`)"""
+    if not user or not judge.available():
+        return False
+    return "*" in config.AI_EMAILS or (user.email or "").lower() in config.AI_EMAILS
+
+
+def ai_allowed(m: Match) -> bool:
+    """La partita può usare l'AI solo se fra i giocatori c'è un account di `AI_EMAILS`.
+    Altrimenti niente giudice AI, niente foto generate né scelte dal modello."""
+    from sqlalchemy.orm import object_session
+
+    from .models import User
+
+    s = object_session(m)
+    return any(ai_user(s.get(User, p.user_id)) for p in m.players)
+
+
 def judge_mode(m: Match) -> str:
-    return m.settings.get("judge", "voto")
+    mode = m.settings.get("judge", "voto")
+    if mode != "voto" and not ai_allowed(m):
+        return "voto"
+    return mode
 
 
 def advance(m: Match, r: Round) -> bool:
@@ -718,7 +739,8 @@ def view(m: Match, seat: int | None, online: set[int] | None = None) -> dict:
         "server_now": now(),
         "created_at": m.created_at,
         "finished_at": m.finished_at,
-        "settings": settings_of(m),
+        "settings": {**settings_of(m), "judge": judge_mode(m)},
+        "ai": ai_allowed(m),
         "grace_s": GRACE_S,
         "players": [
             {

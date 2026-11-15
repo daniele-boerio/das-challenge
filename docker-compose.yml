@@ -18,7 +18,10 @@ services:
     build: ./backend
     environment:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-      - AI_MODEL=${AI_MODEL:-anthropic/claude-opus-4-8}
+      - AI_MODEL=${AI_MODEL:-anthropic/claude-opus-4.8}
+      # Solo le partite con uno di questi account (mail separate da virgole) usano l'AI.
+      - AI_EMAILS=${AI_EMAILS:-}
+      - IMAGE_MODEL=${IMAGE_MODEL:-openai/gpt-image-2}
       # Accesso con mail + codice: senza SMTP_HOST il codice finisce nei log.
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}

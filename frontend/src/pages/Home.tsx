@@ -95,7 +95,7 @@ export default function Home() {
                   </button>
                 ))}
               </div>
-              {!aiOk && <small className="muted">Il giudice AI non è configurato sul server: si vota a vicenda.</small>}
+              {!aiOk && <small className="muted">L’AI si usa solo nelle partite con un account abilitato: qui si vota a vicenda.</small>}
             </div>
 
             <div className="field">

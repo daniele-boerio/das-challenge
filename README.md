@@ -43,6 +43,12 @@ più punti.
 - **Galleria**: le *tue* sfide finite con reference e foto, le tue vittorie e il testa a testa
   con ogni avversario (in quante sfide giocate insieme hai fatto più punti tu o lui).
 
+## Chi può usare l'AI
+
+L'AI costa a chi ha messo la chiave, quindi si accende solo nelle partite in cui gioca un account
+elencato in `AI_EMAILS` (mail separate da virgole, nelle variabili di Coolify). Nelle altre partite
+si vota a vicenda e le reference si cercano su Openverse e Commons senza nessun modello.
+
 ## Da dove vengono le reference
 
 La reference non è il soggetto vero ma **una scultura in pasta da modellare** di quel soggetto

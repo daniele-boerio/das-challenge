@@ -256,7 +256,8 @@ def _ai_pick(
 
 
 def fetch(
-    query: str, rng: random.Random | None = None, subject: str | None = None, colors: bool = False
+    query: str, rng: random.Random | None = None, subject: str | None = None, colors: bool = False,
+    ai: bool = True,
 ) -> tuple[str | None, dict | None]:
     """(nome del file salvato, attribuzione), oppure (None, None) se non si trova
     nessuna scultura: il round parte lo stesso, col solo nome del soggetto."""
@@ -266,7 +267,7 @@ def fetch(
             cands = candidates(c, query, colors)
             rng.shuffle(cands)
             order = cands
-            if cands and config.REFERENCE_AI and config.OPENROUTER_API_KEY:
+            if cands and ai and config.REFERENCE_AI and config.OPENROUTER_API_KEY:
                 try:
                     chosen = _ai_pick(c, subject or query, query, cands, colors)
                     if chosen is None:
