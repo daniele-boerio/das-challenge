@@ -107,14 +107,41 @@ def test_create_join_up_to_eight(app_env):
     assert ninth.get(f"/api/matches/{code}").status_code == 403
 
 
-def test_join_closes_when_first_round_starts(app_env):
+def test_late_join_waits_for_the_next_round(app_env, jpeg):
+    """Si entra anche a partita cominciata: chi arriva guarda, non vota e non
+    consegna, e gioca dal round dopo. A partita finita non si entra più."""
     client, _ = app_env
-    code, (host, guest) = setup_match(client)
+    code, (host, guest) = setup_match(client, {"judge": "voto", "rounds": 2})
     late = new_player(client, "tardi@example.com", "Tardi")
-    assert late.get(f"/api/matches/{code}").status_code == 200  # in sala d'attesa si vede
     host.post(f"/api/matches/{code}/rounds", json={"difficulty": "facile"})
-    assert late.post(f"/api/matches/{code}/join").status_code == 409
-    assert late.get(f"/api/matches/{code}").status_code == 403
+    outside = late.get(f"/api/matches/{code}").json()
+    assert outside["joinable"] and outside["rounds"] == []  # da fuori niente foto né soggetto
+    st = late.post(f"/api/matches/{code}/join").json()["state"]
+    assert st["you"] == 2 and [e["seat"] for e in st["rounds"][0]["entries"]] == [0, 1]
+    assert late.post(f"/api/matches/{code}/rounds/1/photo", files={"photo": ("a.jpg", jpeg(), "image/jpeg")}).status_code == 403
+    upload(host, code, 1, jpeg)
+    upload(guest, code, 1, jpeg)
+    st = late.get(f"/api/matches/{code}").json()
+    assert st["rounds"][0]["votes"]["targets"] == []
+    assert late.post(f"/api/matches/{code}/rounds/1/vote", json={"votes": {"0": 5, "1": 5}}).status_code == 400
+    host.post(f"/api/matches/{code}/rounds/1/vote", json={"votes": {"1": 6}})
+    guest.post(f"/api/matches/{code}/rounds/1/vote", json={"votes": {"0": 8}})
+    st = host.get(f"/api/matches/{code}").json()
+    assert st["rounds"][0]["status"] == "done"  # il voto non aspetta chi è entrato dopo
+    st = host.post(f"/api/matches/{code}/rounds", json={"difficulty": "facile"}).json()
+    assert [e["seat"] for e in st["rounds"][1]["entries"]] == [0, 1, 2]
+    for p in (host, guest, late):
+        upload(p, code, 2, jpeg)
+    host.post(f"/api/matches/{code}/rounds/2/vote", json={"votes": {"1": 6, "2": 7}})
+    guest.post(f"/api/matches/{code}/rounds/2/vote", json={"votes": {"0": 6, "2": 7}})
+    late.post(f"/api/matches/{code}/rounds/2/vote", json={"votes": {"0": 6, "1": 7}})
+    st = host.get(f"/api/matches/{code}").json()
+    assert st["rounds"][1]["status"] == "done"
+    if st["status"] != "finished":
+        assert host.post(f"/api/matches/{code}/finish").status_code == 200
+    other = new_player(client, "dopo@example.com", "Dopo")
+    assert other.post(f"/api/matches/{code}/join").status_code == 409
+    assert other.get(f"/api/matches/{code}").status_code == 403
 
 
 def test_same_name_gets_a_number(app_env):
@@ -483,6 +510,11 @@ def test_websocket_refuses_outsiders(app_env):
     client, _ = app_env
     code, seats = setup_match(client)
     seats[0].post(f"/api/matches/{code}/rounds", json={})
+    from app import db
+    from app.models import Match
+
+    with db.session_scope() as s:  # a partita finita da fuori non si guarda più
+        s.query(Match).filter(Match.code == code).update({"status": "finished"})
     client.post("/api/auth/logout")
     with pytest.raises(WebSocketDisconnect) as exc:
         with client.websocket_connect(f"/api/ws/{code}") as ws:

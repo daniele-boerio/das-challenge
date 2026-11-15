@@ -192,8 +192,10 @@ def player(m: Match, seat: int) -> Player:
 
 
 def joinable(m: Match) -> bool:
-    """Si entra solo dalla sala d'attesa: col primo round la partita si chiude."""
-    return m.status == "lobby" and len(m.players) < MAX_PLAYERS
+    """Si entra finché la partita non è finita e c'è posto. Chi entra a partita
+    cominciata aspetta: gioca dal round dopo (`create_round` dà una `Entry` solo a
+    chi c'è in quel momento)."""
+    return m.status != "finished" and len(m.players) < MAX_PLAYERS
 
 
 def check_can_view(m: Match, seat: int | None):
@@ -208,8 +210,8 @@ def join(db: Session, m: Match, user) -> int:
         if m.host_user_id == user.id:
             raise GameError("Non puoi sfidare te stesso: manda il link agli avversari")
         raise GameError("Sei già in questa partita")
-    if m.status != "lobby":
-        raise GameError("La partita è già cominciata", 409)
+    if m.status == "finished":
+        raise GameError("La partita è finita", 409)
     if len(m.players) >= MAX_PLAYERS:
         raise GameError(f"La partita è al completo ({MAX_PLAYERS} giocatori)", 409)
     base = clean_name(user.name)
@@ -477,20 +479,25 @@ def ai_user(user) -> bool:
     return "*" in config.AI_EMAILS or (user.email or "").lower() in config.AI_EMAILS
 
 
-def ai_allowed(m: Match) -> bool:
+def ai_allowed(m: Match, r: Round | None = None) -> bool:
     """La partita può usare l'AI solo se fra i giocatori c'è un account di `AI_EMAILS`.
-    Altrimenti niente giudice AI, niente foto generate né scelte dal modello."""
+    Altrimenti niente giudice AI, niente foto generate né scelte dal modello. Con un
+    round contano solo i suoi giocatori: chi entra a metà non cambia il giudice di
+    un round già partito."""
     from sqlalchemy.orm import object_session
 
     from .models import User
 
     s = object_session(m)
-    return any(ai_user(s.get(User, p.user_id)) for p in m.players)
+    seats = {e.seat for e in r.entries} if r is not None else None
+    return any(
+        ai_user(s.get(User, p.user_id)) for p in m.players if seats is None or p.seat in seats
+    )
 
 
-def judge_mode(m: Match) -> str:
+def judge_mode(m: Match, r: Round | None = None) -> str:
     mode = m.settings.get("judge", "voto")
-    if mode != "voto" and not ai_allowed(m):
+    if mode != "voto" and not ai_allowed(m, r):
         return "voto"
     return mode
 
@@ -511,7 +518,7 @@ def advance(m: Match, r: Round) -> bool:
     if not delivered(r):
         maybe_finalize(m, r)
         return False
-    if judge_mode(m) in ("ai", "entrambi"):
+    if judge_mode(m, r) in ("ai", "entrambi"):
         if judge.available():
             r.ai_status, r.ai_started_at = "pending", now()
             return True
@@ -524,15 +531,18 @@ def advance(m: Match, r: Round) -> bool:
 
 
 def needs_votes(m: Match, r: Round) -> bool:
-    return judge_mode(m) in ("voto", "entrambi") or r.ai_status == "failed"
+    return judge_mode(m, r) in ("voto", "entrambi") or r.ai_status == "failed"
 
 
 def needs_ai(m: Match, r: Round) -> bool:
-    return judge_mode(m) in ("ai", "entrambi") and r.ai_status != "failed"
+    return judge_mode(m, r) in ("ai", "entrambi") and r.ai_status != "failed"
 
 
 def vote_targets(r: Round, seat: int) -> list[int]:
-    """Chi deve votare quel giocatore: le creazioni consegnate da tutti gli altri."""
+    """Chi deve votare quel giocatore: le creazioni consegnate da tutti gli altri.
+    Chi non gioca il round (è entrato dopo) non vota."""
+    if all(e.seat != seat for e in r.entries):
+        return []
     return [e.seat for e in delivered(r) if e.seat != seat]
 
 
@@ -600,10 +610,10 @@ def maybe_finalize(m: Match, r: Round) -> bool:
         return False
     use_votes = needs_votes(m, r)
     if use_votes and not votes_closed(r):
-        if not all(has_voted(r, p.seat) for p in m.players):
+        if not all(has_voted(r, e.seat) for e in r.entries):
             return False
 
-    ai = (r.ai_result or {}).get("entries", {}) if r.ai_status == "done" and judge_mode(m) != "voto" else {}
+    ai = (r.ai_result or {}).get("entries", {}) if r.ai_status == "done" and judge_mode(m, r) != "voto" else {}
     mult = MULTIPLIER[r.difficulty]
     for e in r.entries:
         if not e.photo:
@@ -690,10 +700,10 @@ def _round_view(m: Match, r: Round, seat: int | None) -> dict:
             }
         )
 
-    voting = needs_votes(m, r) if revealed else judge_mode(m) in ("voto", "entrambi")
+    voting = needs_votes(m, r) if revealed else judge_mode(m, r) in ("voto", "entrambi")
     votes: dict = {
         "needed": voting,
-        "voted": [p.seat for p in m.players if revealed and has_voted(r, p.seat)],
+        "voted": [e.seat for e in r.entries if revealed and has_voted(r, e.seat)],
         "closed": votes_closed(r),
         "targets": vote_targets(r, seat) if seat is not None and revealed else [],
         "mine": (r.votes or {}).get(str(seat)) if seat is not None else None,
@@ -752,7 +762,9 @@ def view(m: Match, seat: int | None, online: set[int] | None = None) -> dict:
             }
             for p in m.players
         ],
-        "rounds": [_round_view(m, r, seat) for r in m.rounds],
+        # Chi non è nella partita (sta per entrare dal link) vede solo chi gioca e le regole.
+        "rounds": [_round_view(m, r, seat) for r in m.rounds] if seat is not None else [],
+        "joinable": joinable(m),
         "suggested_difficulty": suggested_difficulty(m) if m.status in ("lobby", "ready") else None,
         "winners": winners(m),
         "rematch_code": m.rematch_code,

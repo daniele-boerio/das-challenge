@@ -68,7 +68,7 @@ export default function MatchPage() {
       </div>
       {state.you !== null && <Scoreboard state={state} />}
 
-      {state.you === null && state.status === "lobby" ? (
+      {state.you === null && (state.joinable ?? state.status === "lobby") ? (
         <JoinForm
           code={code}
           state={state}
@@ -128,6 +128,11 @@ function JoinForm({ code, state, onJoined }: { code: string; state: MatchState; 
         <Who state={state} seat={0} /> ti sfida!
       </h2>
       {others.length > 0 && <p>Ci sono già {joinNames(others)}.</p>}
+      {state.status !== "lobby" && (
+        <p>
+          <b>La partita è già cominciata:</b> entri adesso e giochi dal prossimo round.
+        </p>
+      )}
       <Rules state={state} />
       <button className="btn btn-big btn-pink" disabled={busy} onClick={go}>
         {busy ? "Entro…" : "Accetto la sfida"}
@@ -318,6 +323,7 @@ function RoundPlay({ state, r, now, setState }: { state: MatchState; r: RoundSta
   const { toast } = useApp();
   const you = state.you;
   const me = r.entries.find((e) => e.seat === you) || null;
+  const plays = me !== null;
   const others = r.entries.filter((e) => e.seat !== you);
   const before = now < r.starts_at;
   const delivered = me?.delivered ?? false;
@@ -326,17 +332,17 @@ function RoundPlay({ state, r, now, setState }: { state: MatchState; r: RoundSta
   const seenRush = useRef(r.rush_end_at);
 
   // Il tempo che conta per me: il mio timer o la rincorsa. Senza nessuno dei due, il cronometro.
-  const dl = me?.deadline ?? (you === null ? r.entries[0]?.deadline ?? null : null);
+  const dl = me?.deadline ?? (!plays ? r.entries[0]?.deadline ?? null : null);
   const left = dl != null ? dl - now : Infinity;
   const closeLeft = me?.close_at != null ? me.close_at - now : null;
   const closed = closeLeft != null && closeLeft <= 0;
   const warned = useRef({ min: left < 60, end: left <= 0 });
 
-  useWakeLock(!delivered && you !== null);
+  useWakeLock(!delivered && plays);
 
   // Bip all'ultimo minuto e allo scadere.
   useEffect(() => {
-    if (before || delivered || you === null || dl == null) return;
+    if (before || delivered || !plays || dl == null) return;
     if (left < 60 && !warned.current.min) {
       warned.current.min = true;
       beep(660, 140, 2);
@@ -347,7 +353,7 @@ function RoundPlay({ state, r, now, setState }: { state: MatchState; r: RoundSta
       beep(440, 400, 3);
       buzz([300, 100, 300, 100, 300]);
     }
-  }, [left, before, delivered, you, dl]);
+  }, [left, before, delivered, plays, dl]);
 
   // Power-up degli altri: lo si viene a sapere.
   useEffect(() => {
@@ -369,13 +375,13 @@ function RoundPlay({ state, r, now, setState }: { state: MatchState; r: RoundSta
   useEffect(() => {
     if (r.rush_end_at && !seenRush.current) {
       seenRush.current = r.rush_end_at;
-      if (!delivered && you !== null) {
+      if (!delivered && plays) {
         toast(`⚡ Rincorsa! Hai ${state.settings.rush_minutes} minuti per finire`, "bad");
         beep(880, 160, 3);
         buzz([200, 80, 200]);
       }
     }
-  }, [r.rush_end_at, delivered, you, state.settings.rush_minutes, toast]);
+  }, [r.rush_end_at, delivered, plays, state.settings.rush_minutes, toast]);
 
   // L'anello si svuota sulla durata di ciò che sta finendo: il round o la rincorsa.
   const span = r.rush_end_at && dl === r.rush_end_at ? state.settings.rush_minutes * 60 : dl != null ? dl - r.starts_at : 1;
@@ -497,14 +503,20 @@ function RoundPlay({ state, r, now, setState }: { state: MatchState; r: RoundSta
         )}
       </section>
 
-      {you !== null && !delivered && !before && state.settings.powerups && (
+      {you !== null && !plays && (
+        <section className="card center">
+          <Hourglass /> Sei entrato a round cominciato: guardi questo, e giochi dal prossimo.
+        </section>
+      )}
+
+      {plays && !delivered && !before && state.settings.powerups && (
         <Powerups state={state} r={r} now={now} setState={setState} />
       )}
 
-      {you !== null && !before && !closed && (
+      {plays && !before && !closed && (
         <Deliver state={state} r={r} timeUp={dl != null && left <= 0} strict={closeLeft != null} setState={setState} />
       )}
-      {you !== null && closed && !delivered && (
+      {plays && closed && !delivered && (
         <section className="card center warn-card">
           <Lock /> Tempo scaduto: le consegne sono chiuse. Questo round vale 0 per te, ma potrai votare gli altri.
         </section>
@@ -745,8 +757,9 @@ function Judging({ state, r, setState }: { state: MatchState; r: RoundState; set
   const targets = r.votes.targets;
   const [values, setValues] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState(false);
-  const iVoted = you !== null && r.votes.voted.includes(you);
-  const missing = state.players.filter((p) => !r.votes.voted.includes(p.seat));
+  const plays = you !== null && r.entries.some((e) => e.seat === you);
+  const iVoted = plays && r.votes.voted.includes(you!);
+  const missing = state.players.filter((p) => r.entries.some((e) => e.seat === p.seat) && !r.votes.voted.includes(p.seat));
 
   async function send() {
     setBusy(true);
@@ -786,7 +799,10 @@ function Judging({ state, r, setState }: { state: MatchState; r: RoundState; set
       )}
       {r.ai.status === "failed" && r.ai.error && <section className="card warn-card">{r.ai.error}</section>}
 
-      {r.votes.needed && you !== null && (
+      {r.votes.needed && you !== null && !plays && (
+        <section className="card center muted">Questo round lo votano gli altri: tu giochi dal prossimo.</section>
+      )}
+      {r.votes.needed && plays && (
         <section className="card pop center">
           {!iVoted && targets.length > 0 ? (
             <>

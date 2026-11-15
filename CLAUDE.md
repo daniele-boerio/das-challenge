@@ -37,8 +37,10 @@ foto delle creazioni, voto reciproco o giudice AI (OpenRouter). Vedi README.md.
 - Se il giudice AI fallisce o resta appeso, il round passa al voto (`ai_failed`, `heal`):
   la partita non deve mai bloccarsi.
 - Chi gioca è l'account (`Player.user_id`). Una partita la vedono solo i giocatori
-  (`check_can_view`); gli altri solo finché ci si può entrare (sala d'attesa, non piena).
-  Col primo round la partita si chiude. La galleria mostra solo le partite dell'utente collegato.
+  (`check_can_view`); gli altri finché ci si può entrare (`joinable`: non finita, non piena), e
+  senza i round. Chi entra a metà non ha `Entry` nel round in corso: non consegna, non vota, e il
+  round non lo aspetta; gioca dal round dopo. Il giudice di un round lo decidono i suoi giocatori
+  (`judge_mode(m, r)`). La galleria mostra solo le partite dell'utente collegato.
 - Le scadenze rigide (`close_at`) hanno sempre `GRACE_S` in più per fotografare; il timer
   libero non chiude mai le consegne, la rincorsa sì.
 - Le colonne `host_*`/`guest_*` di `matches` e `rounds` sono della versione a due: i dati

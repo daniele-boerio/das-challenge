@@ -10,8 +10,9 @@ più punti.
 0. Si entra con la mail: arriva un codice di 6 cifre, la prima volta si sceglie il nome, e poi
    si resta dentro per sempre su quel dispositivo.
 1. Chi crea la sfida sceglie le regole e manda il link (o il codice di 4 lettere).
-2. Gli altri entrano dal link, ciascuno dal suo telefono, fino a 8 giocatori. Si entra solo
-   dalla sala d'attesa: col primo round la partita si chiude, e la vedono solo i giocatori.
+2. Gli altri entrano dal link, ciascuno dal suo telefono, fino a 8 giocatori. Si entra anche
+   a partita cominciata: chi arriva a metà guarda il round in corso e gioca dal successivo. A
+   partita finita non si entra più, e la vedono solo i giocatori.
 3. A ogni round chi ha creato la partita sceglie la difficoltà: **facile ×1**, **media ×1,5**,
    **difficile ×2** (oppure casuale). Dopo un «3, 2, 1» compare la reference e parte il timer.
 4. Quando hai finito, o allo scadere, fotografi la tua creazione e la consegni.

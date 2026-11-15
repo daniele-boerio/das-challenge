@@ -87,6 +87,7 @@ export interface MatchState {
   you: number | null;
   max_players: number;
   ai?: boolean;
+  joinable?: boolean;
   server_now: number;
   created_at: number;
   finished_at: number | null;
