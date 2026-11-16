@@ -23,8 +23,15 @@ export default function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined);
   const [toasts, setToasts] = useState<{ id: number; msg: string; kind: ToastKind }[]>([]);
 
+  // La configurazione dipende da chi è collegato (l'AI la accende solo chi è in AI_EMAILS):
+  // si richiede dopo ogni accesso o uscita, non solo all'apertura della pagina.
+  const userId = user ? user.id : null;
   useEffect(() => {
+    if (user === undefined) return;
     api.config().then(setConfig).catch(() => setConfig(null));
+  }, [userId, user?.name]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
     api
       .me()
       .then((r) => setUser(r.user))
